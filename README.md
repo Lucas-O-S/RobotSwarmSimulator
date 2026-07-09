@@ -5,7 +5,52 @@ do ecossistema [DotBots](https://github.com/DotBots) para o backend
 [TCC_Swarm_Robots](https://github.com/Lucas-O-S/TCC_Swarm_Robots) (NestJS),
 sem hardware. Arquitetura e roadmap completos em [`PLANO.md`](./PLANO.md).
 
-## Estado atual: Fase 1 — núcleo headless
+## Estado atual: Fase 2 — mapa 2D read-only
+
+UI React minimalista (`src/ui/`) que carrega um cenário JSON, roda o `World`
+em tempo real e desenha a vista de topo. **Somente visualização** — edição de
+cenário é a Fase 3; MQTT/protocolo, Fases 4–5.
+
+```bash
+npm install
+npm run dev     # abre a UI em http://localhost:5173
+```
+
+O que a tela mostra:
+
+- **Mapa 2D de topo** (Canvas 2D): grid conforme `arena.grid_mm`, borda da
+  arena, obstáculos como retângulos cinza, robôs como círculos (no raio real
+  de colisão) com uma seta indicando o heading (theta) e o sufixo do address.
+  Cor do robô vem do RGB do LED se definido; senão, uma paleta padrão.
+  Robôs em AUTO mostram a rota (tracejada) com os waypoints numerados e o
+  alvo atual destacado; cada robô deixa uma trilha curta do caminho recente.
+  **Convenção de eixos**: origem no canto inferior-esquerdo, Y cresce pra
+  cima (o canvas espelha o Y no desenho — ver `MapView.tsx`).
+- **Painel lateral** (read-only): address, pos x/y (mm), theta (graus), modo,
+  bateria, pwm L/R e `wp_idx`.
+- **Controles**: Play/Pause, Reset (recarrega o cenário), seletor de cenário
+  e um botão "Move-raw teste" que injeta `CMD_MOVE_RAW(0,80,0,80)` no 1º robô
+  em MANUAL (só pra demonstrar movimento — sem UI de joystick ainda).
+
+Como o `exemplo.json` declara os robôs em MANUAL parados, ao carregar o
+cenário a UI injeta (via API do core) a mesma rota AUTO do demo headless no
+1º robô — ele contorna a barreira e para no último waypoint. O 2º robô fica
+parado até você clicar em "Move-raw teste" (ele anda reto e fica bloqueado
+pela barreira, sem atravessar).
+
+Peças da fase (nenhuma mudança no núcleo):
+
+- **`src/ui/simLoop.ts`** — lógica pura do loop: dt real do
+  `requestAnimationFrame` → ticks fixos de `1/tick_hz` via acumulador, com
+  clamp de dt (aba em background) e teto de ticks por frame. Testada.
+- **`src/ui/useWorld.ts`** — hook que instancia o `World` via
+  `loadScenario`, roda o loop, grava trilhas e expõe snapshots + controles.
+- **`src/ui/MapView.tsx`** — desenho do mapa (Canvas 2D), escala mundo(mm)→
+  tela(px) com fit ao contêiner mantendo a proporção.
+- **`src/ui/Inspector.tsx`** — telemetria por robô.
+- **`src/ui/scenarios.ts`** — registro de cenários embutidos no bundle.
+
+## Fase 1 — núcleo headless
 
 Núcleo de simulação puro em TypeScript (`src/core/`), **sem React e sem
 transporte/MQTT** (fases futuras). O que existe:
@@ -26,11 +71,10 @@ transporte/MQTT** (fases futuras). O que existe:
 - **`scenario.ts`** — `loadScenario(json)` / `serializeScenario(world)`
   seguindo o schema da seção 7 do PLANO (conversão `theta_deg` ⇄ rad).
 
-O scaffold Vite + React existe só como casa para as próximas fases
-(`npm run dev` mostra um placeholder). `src/net/`, `src/protocol/`,
-`src/link/` e `src/ui/` são placeholders vazios.
+`src/net/`, `src/protocol/` e `src/link/` seguem como placeholders vazios
+(Fases 4–5).
 
-## Como usar
+## Como usar (headless)
 
 ```bash
 npm install     # instala dependências
@@ -49,10 +93,12 @@ contra a barreira, roda 10 s simulados e imprime as poses a cada segundo.
 - AUTO: robô alcança waypoints (`waypoint_idx` avança) e para no fim da rota;
 - colisão: robô **não atravessa** obstáculo retangular nem as bordas da arena;
 - bateria: decai monotonicamente e satura em 0 (robô para sem bateria);
-- cenário: load/serialize round-trip batendo com o schema do PLANO.
+- cenário: load/serialize round-trip batendo com o schema do PLANO;
+- loop da UI (`simLoop`): acumulador de passo fixo sem drift, clamp de dt e
+  teto de ticks por frame.
 
 ## Próximas fases
 
-Ver roadmap na seção 8 do [`PLANO.md`](./PLANO.md): mapa 2D read-only (2),
-editor de cenário (3), `protocol/` + codec binário (4), `MqttLink` +
-Mosquitto (5), envelhecimento de estado (6), PDR/latência e swarmit (7).
+Ver roadmap na seção 8 do [`PLANO.md`](./PLANO.md): editor de cenário (3),
+`protocol/` + codec binário (4), `MqttLink` + Mosquitto (5), envelhecimento
+de estado (6), PDR/latência e swarmit (7).
