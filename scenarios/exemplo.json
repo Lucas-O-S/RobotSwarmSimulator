@@ -1,0 +1,31 @@
+{
+  "version": 1,
+  "network": { "id": "1200", "gateway_addr": "0000000000000001" },
+  "arena": { "width_mm": 2000, "height_mm": 2000, "grid_mm": 100 },
+  "obstacles": [
+    { "id": "barreira-1", "x_mm": 900, "y_mm": 600, "w_mm": 200, "h_mm": 800 }
+  ],
+  "robots": [
+    {
+      "address": "BDF2B04BC00D2725",
+      "application": 0,
+      "mode": 0,
+      "start": { "x_mm": 300, "y_mm": 300, "theta_deg": 0 },
+      "battery": 100
+    },
+    {
+      "address": "A1B2C3D4E5F60708",
+      "application": 0,
+      "mode": 0,
+      "start": { "x_mm": 300, "y_mm": 1000, "theta_deg": 0 },
+      "battery": 100
+    }
+  ],
+  "sim": {
+    "tick_hz": 50,
+    "advertise_hz": 2,
+    "battery_drain_per_min": 1.0,
+    "pdr_percent": 100,
+    "slot_latency_ms": 0
+  }
+}
