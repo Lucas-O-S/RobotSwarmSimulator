@@ -244,8 +244,10 @@ Cliente MQTT no browser: `mqtt.js` (suporta MQTT-over-WebSocket).
     { "id": "wall-1", "x_mm": 1000, "y_mm": 500, "w_mm": 200, "h_mm": 1500 }
   ],
   "robots": [
-    { "address": "BDF2B04BC00D2725", "application": 0, "mode": 0,
-      "start": { "x_mm": 200, "y_mm": 200, "theta_deg": 90 }, "battery": 100 }
+    { "address": "BDF2B04BC00D2725", "application": 0, "mode": 1,
+      "start": { "x_mm": 200, "y_mm": 200, "theta_deg": 90 }, "battery": 100,
+      "waypoints": [ { "x_mm": 1500, "y_mm": 300 }, { "x_mm": 1500, "y_mm": 1700 } ],
+      "waypoint_threshold_mm": 50 }
   ],
   "sim": { "tick_hz": 50, "advertise_hz": 2, "battery_drain_per_min": 1.0,
            "pdr_percent": 100, "slot_latency_ms": 0 }
@@ -254,6 +256,9 @@ Cliente MQTT no browser: `mqtt.js` (suporta MQTT-over-WebSocket).
 
 Unidades em mm (o mundo LH2 usa x/y de 4 bytes). `address` em hex 16 chars
 (bate com `VARCHAR(16)` do `init.sql`). `network.id` em 4 hex (swarmit=`1200`).
+`waypoints` e `waypoint_threshold_mm` (rota do modo AUTO, Fase 3) são
+**opcionais**: cenários antigos sem os campos continuam válidos; o threshold
+default é 50 mm. A rota só é seguida quando `mode` = 1 (Auto).
 
 ## 8. Roadmap incremental
 
