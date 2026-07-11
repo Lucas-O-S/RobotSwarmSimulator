@@ -5,16 +5,83 @@ do ecossistema [DotBots](https://github.com/DotBots) para o backend
 [TCC_Swarm_Robots](https://github.com/Lucas-O-S/TCC_Swarm_Robots) (NestJS),
 sem hardware. Arquitetura e roadmap completos em [`PLANO.md`](./PLANO.md).
 
-## Estado atual: Fase 2 — mapa 2D read-only
+## Estado atual: Fase 3 — editor de cenário
 
-UI React minimalista (`src/ui/`) que carrega um cenário JSON, roda o `World`
-em tempo real e desenha a vista de topo. **Somente visualização** — edição de
-cenário é a Fase 3; MQTT/protocolo, Fases 4–5.
+A UI agora tem dois modos, alternados no topo da tela:
+
+- **Simular** — a visualização da Fase 2 (mapa 2D + telemetria), rodando o
+  cenário atual em tempo real;
+- **Editar** — monta o cenário no mapa (barreiras, robôs, rotas) e
+  salva/carrega como arquivo `.json`. No modo Editar a simulação fica
+  **pausada**: edita-se o estado INICIAL do cenário, não o simulado.
 
 ```bash
 npm install
 npm run dev     # abre a UI em http://localhost:5173
 ```
+
+### Como usar o editor
+
+Ferramentas (barra do topo, dentro do modo Editar):
+
+- **Selecionar** — clique num robô/barreira pra selecionar; arraste pra
+  mover. A barreira selecionada ganha **alças** nos cantos/bordas pra
+  redimensionar; o robô selecionado ganha um **ponto azul** na ponta da seta
+  pra girar o heading (snap de 15° com o snap ligado).
+- **+ Barreira** — arraste no mapa pra desenhar um retângulo (mínimo
+  20×20 mm).
+- **+ Robô** — clique no mapa pra posicionar um robô novo (address hex de
+  16 chars gerado automaticamente, MANUAL, bateria 100%).
+- **+ Waypoint** — com um robô selecionado, cada clique no mapa acrescenta
+  um waypoint à rota dele (o robô entra em AUTO, espelhando o efeito do
+  payload `LH2_WAYPOINTS`).
+- **snap ao grid** — liga/desliga o snap de posições/tamanhos ao
+  `arena.grid_mm`.
+- **Delete** (tecla ou botão) — apaga o item selecionado.
+
+O painel lateral edita as propriedades do item selecionado: barreira
+(`id`, x/y/largura/altura em mm) e robô (`address` com validação de 16
+dígitos hex, `application`, `mode` Manual/Auto, `battery`, posição/theta e —
+em AUTO — a lista de waypoints com remoção ponto a ponto e o
+`waypoint_threshold_mm`).
+
+### Salvar / carregar JSON
+
+- **Salvar JSON** — serializa o cenário atual (via `serializeScenario` do
+  core) e baixa um `.json` no schema da seção 7 do PLANO, **incluindo**
+  `mode`/`waypoints` por robô.
+- **Carregar JSON** — upload de um `.json`; o arquivo é validado pela MESMA
+  validação do core (`loadScenario`) e, se ok, abre no editor. Arquivo
+  inválido mostra uma mensagem de erro amigável sem derrubar a UI.
+- O schema ganhou os campos **opcionais** `robots[*].waypoints`
+  (`[{x_mm,y_mm}]`) e `robots[*].waypoint_threshold_mm` (default 50).
+  Cenários antigos, sem os campos, continuam carregando (retrocompatível) —
+  e cenários sem rota são salvos sem os campos, idênticos ao formato antigo.
+
+Ao alternar **Editar → Simular**, a simulação roda exatamente o cenário
+editado — robôs em AUTO já partem seguindo os waypoints persistidos no JSON
+(isso eliminou a gambiarra da Fase 2 que injetava a rota na carga; o
+`exemplo.json` agora declara o 1º robô em AUTO com a rota completa).
+
+Peças da fase:
+
+- **`src/ui/editorGeometry.ts`** — geometria pura do editor (snap, retângulo
+  de arrasto, alças de resize, hit-test, contenção na arena). Testada.
+- **`src/ui/editorModel.ts`** — operações puras sobre o cenário (gerar/validar
+  address, criar/mover/apagar barreira/robô, waypoints, validação de arquivo
+  carregado). Testada.
+- **`src/ui/ScenarioEditor.tsx`** — canvas do editor (eventos de mouse +
+  desenho, mesmas convenções de eixos do MapView).
+- **`src/ui/EditorPanel.tsx`** — painel de propriedades do item selecionado.
+- **`src/ui/SimView.tsx`** — o modo Simular (a Fase 2 empacotada como
+  componente); **`src/ui/fileio.ts`** — download do `.json`.
+- Core: `loadScenario`/`serializeScenario` estendidos de forma
+  retrocompatível pra persistir `waypoints`/`waypoint_threshold_mm`.
+
+## Fase 2 — mapa 2D read-only
+
+UI React minimalista (`src/ui/`) que carrega um cenário JSON, roda o `World`
+em tempo real e desenha a vista de topo.
 
 O que a tela mostra:
 
@@ -32,13 +99,12 @@ O que a tela mostra:
   e um botão "Move-raw teste" que injeta `CMD_MOVE_RAW(0,80,0,80)` no 1º robô
   em MANUAL (só pra demonstrar movimento — sem UI de joystick ainda).
 
-Como o `exemplo.json` declara os robôs em MANUAL parados, ao carregar o
-cenário a UI injeta (via API do core) a mesma rota AUTO do demo headless no
-1º robô — ele contorna a barreira e para no último waypoint. O 2º robô fica
-parado até você clicar em "Move-raw teste" (ele anda reto e fica bloqueado
-pela barreira, sem atravessar).
+No `exemplo.json`, o 1º robô está em AUTO com a rota persistida no próprio
+JSON (desde a Fase 3) — ele contorna a barreira e para no último waypoint.
+O 2º robô fica parado até você clicar em "Move-raw teste" (ele anda reto e
+fica bloqueado pela barreira, sem atravessar).
 
-Peças da fase (nenhuma mudança no núcleo):
+Peças da fase:
 
 - **`src/ui/simLoop.ts`** — lógica pura do loop: dt real do
   `requestAnimationFrame` → ticks fixos de `1/tick_hz` via acumulador, com
@@ -94,11 +160,16 @@ contra a barreira, roda 10 s simulados e imprime as poses a cada segundo.
 - colisão: robô **não atravessa** obstáculo retangular nem as bordas da arena;
 - bateria: decai monotonicamente e satura em 0 (robô para sem bateria);
 - cenário: load/serialize round-trip batendo com o schema do PLANO;
+- cenário (Fase 3): waypoints/mode persistidos, threshold default,
+  retrocompatibilidade com cenários antigos e rejeição de rota malformada;
+- editor (Fase 3): snap ao grid, retângulo de arrasto, resize por alça com
+  tamanho mínimo, contenção na arena, geração/validação de address e
+  validação do arquivo carregado;
 - loop da UI (`simLoop`): acumulador de passo fixo sem drift, clamp de dt e
   teto de ticks por frame.
 
 ## Próximas fases
 
-Ver roadmap na seção 8 do [`PLANO.md`](./PLANO.md): editor de cenário (3),
-`protocol/` + codec binário (4), `MqttLink` + Mosquitto (5), envelhecimento
-de estado (6), PDR/latência e swarmit (7).
+Ver roadmap na seção 8 do [`PLANO.md`](./PLANO.md): `protocol/` + codec
+binário (4), `MqttLink` + Mosquitto (5), envelhecimento de estado (6),
+PDR/latência e swarmit (7).

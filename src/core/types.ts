@@ -96,12 +96,23 @@ export interface ScenarioObstacle {
   h_mm: number;
 }
 
+/** Waypoint persistido no cenário (Fase 3 — editor). */
+export interface ScenarioWaypoint {
+  x_mm: number;
+  y_mm: number;
+}
+
 export interface ScenarioRobot {
   address: string;     // 16 hex
   application: number; // ApplicationType
   mode: number;        // ControlModeType
   start: { x_mm: number; y_mm: number; theta_deg: number };
   battery: number;
+  /** Rota do modo AUTO (OPCIONAL — Fase 3). Cenários antigos, sem o campo,
+   *  continuam carregando (retrocompatível). Só é seguida se mode=1 (Auto). */
+  waypoints?: ScenarioWaypoint[];
+  /** Raio de chegada do waypoint, em mm (OPCIONAL; default 50). */
+  waypoint_threshold_mm?: number;
 }
 
 export interface Scenario {

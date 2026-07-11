@@ -26,7 +26,8 @@ export interface MapViewProps {
 }
 
 // Paleta padrão quando o robô não tem RGB definido (LED apagado = 0,0,0).
-const FALLBACK_COLORS = ['#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#0891b2'];
+// Exportada pro editor (Fase 3) colorir os robôs com a MESMA cor da simulação.
+export const FALLBACK_COLORS = ['#2563eb', '#dc2626', '#059669', '#d97706', '#7c3aed', '#0891b2'];
 
 export function robotColor(r: RobotState, index: number): string {
   const { r: red, g, b } = r.rgb;

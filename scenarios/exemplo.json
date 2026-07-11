@@ -9,9 +9,14 @@
     {
       "address": "BDF2B04BC00D2725",
       "application": 0,
-      "mode": 0,
+      "mode": 1,
       "start": { "x_mm": 300, "y_mm": 300, "theta_deg": 0 },
-      "battery": 100
+      "battery": 100,
+      "waypoints": [
+        { "x_mm": 1500, "y_mm": 300 },
+        { "x_mm": 1500, "y_mm": 1700 }
+      ],
+      "waypoint_threshold_mm": 50
     },
     {
       "address": "A1B2C3D4E5F60708",

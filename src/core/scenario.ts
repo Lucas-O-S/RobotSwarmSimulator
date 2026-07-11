@@ -8,6 +8,10 @@ import { Scenario } from './types';
 export const DEG_TO_RAD = Math.PI / 180;
 export const RAD_TO_DEG = 180 / Math.PI;
 
+/** Raio de chegada usado quando o cenário tem waypoints mas não define
+ *  `waypoint_threshold_mm` (mesmo valor do demo da Fase 1). */
+export const DEFAULT_WAYPOINT_THRESHOLD_MM = 50;
+
 function fail(msg: string): never {
   throw new Error(`Cenário inválido: ${msg}`);
 }
@@ -46,17 +50,34 @@ export function loadScenario(json: Scenario | string): World {
     if (!/^[0-9A-F]{16}$/i.test(r.address)) {
       fail(`address "${r.address}" deve ter 16 dígitos hex`);
     }
-    world.addRobot(
-      new Robot({
-        address: r.address.toUpperCase(),
-        application: r.application,
-        mode: r.mode,
-        x: r.start.x_mm,
-        y: r.start.y_mm,
-        theta: r.start.theta_deg * DEG_TO_RAD, // graus → rad na carga
-        battery: r.battery,
-      }),
-    );
+    const robot = new Robot({
+      address: r.address.toUpperCase(),
+      application: r.application,
+      mode: r.mode,
+      x: r.start.x_mm,
+      y: r.start.y_mm,
+      theta: r.start.theta_deg * DEG_TO_RAD, // graus → rad na carga
+      battery: r.battery,
+    });
+
+    // waypoints são OPCIONAIS (Fase 3) — cenários antigos não têm o campo.
+    // A rota é atribuída direto (sem setWaypoints) pra NÃO forçar AUTO:
+    // o modo persistido em `mode` é respeitado.
+    if (r.waypoints !== undefined) {
+      if (!Array.isArray(r.waypoints)) {
+        fail(`robots["${r.address}"].waypoints deve ser uma lista`);
+      }
+      for (const wp of r.waypoints) {
+        if (typeof wp?.x_mm !== 'number' || typeof wp?.y_mm !== 'number') {
+          fail(`robots["${r.address}"].waypoints[*] precisa de x_mm/y_mm numéricos`);
+        }
+      }
+      robot.waypoints = r.waypoints.map((wp) => ({ x: wp.x_mm, y: wp.y_mm }));
+      robot.waypoint_threshold =
+        r.waypoint_threshold_mm ?? DEFAULT_WAYPOINT_THRESHOLD_MM;
+    }
+
+    world.addRobot(robot);
   }
 
   return world;
@@ -80,17 +101,26 @@ export function serializeScenario(world: World): Scenario {
       w_mm: o.w,
       h_mm: o.h,
     })),
-    robots: world.robots.map((r) => ({
-      address: r.address,
-      application: r.application,
-      mode: r.mode,
-      start: {
-        x_mm: r.pos_x,
-        y_mm: r.pos_y,
-        theta_deg: r.theta * RAD_TO_DEG,
-      },
-      battery: r.battery,
-    })),
+    robots: world.robots.map((r) => {
+      const out: Scenario['robots'][number] = {
+        address: r.address,
+        application: r.application,
+        mode: r.mode,
+        start: {
+          x_mm: r.pos_x,
+          y_mm: r.pos_y,
+          theta_deg: r.theta * RAD_TO_DEG,
+        },
+        battery: r.battery,
+      };
+      // Só emite os campos opcionais quando há rota — cenários sem
+      // waypoints saem idênticos ao formato antigo (retrocompatível).
+      if (r.waypoints.length > 0) {
+        out.waypoints = r.waypoints.map((wp) => ({ x_mm: wp.x, y_mm: wp.y }));
+        out.waypoint_threshold_mm = r.waypoint_threshold;
+      }
+      return out;
+    }),
     sim: { ...world.sim },
   };
 }
