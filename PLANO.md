@@ -95,10 +95,17 @@ gateway real com frota real.
 | 5 | `GATEWAY_INFO` | uplink | o gateway se descrevendo |
 | 255 | `UNKNOWN` | — | — |
 
-**Frame Mari** (`marilib/mari_protocol.py`): header de 20 B
-(`version=2 : 1`, `type : 1`, `network_id : 2`, `destination : 8`,
-`source : 8`), +1 B de `rssi` só no uplink, + payload. Endereço de broadcast:
-`0xFFFFFFFFFFFFFFFF`.
+**Frame Mari** (`marilib/mari_protocol.py`, protocolo **v3** — confirmado
+byte a byte no `marilib-pkg` 0.9.0 do PyPI, a versão que o PyDotBot 0.29.1
+pina; o GitHub `DotBots/marilib@main` ainda mostra o v2 defasado): header de
+**21 B** (`version=3 : 1`, `type : 1`, `network_id : 2`, `destination : 8`,
+`source : 8`, `next_proto : 1`), + payload. Inteiros **little-endian**.
+Endereço de broadcast: `0xFFFFFFFFFFFFFFFF`.
+
+> Diferenças do v2 (que constava aqui antes): o `next_proto` entrou pro
+> header (o demux não é mais um byte dentro do payload) e o byte de `rssi`
+> (`HeaderStats`) foi **removido** do frame — rssi agora só aparece dentro
+> do payload de métricas (`METRICS_PROBE`).
 
 > Nota importante pra backend que se conecta tarde: `NODE_JOINED` é publicado
 > **uma vez** e não é retido no MQTT. O lado cloud **auto-adiciona** nós
@@ -107,10 +114,15 @@ gateway real com frota real.
 
 ### 4.2 Demux de protocolo superior
 
-Dentro de `NODE_DATA` há um `next_proto`:
+O `next_proto` fica no **header Mari** (último byte, v3) e diz quem é o dono
+do payload dos frames `DATA` (enum `NextProto`, `marilib/mari_protocol.py`,
+espelho do `mr_next_proto_t` do firmware):
 
-- `DOTBOT_APP` — dirigir/telemetria (PyDotBot).
-- `SWARMIT_TESTBED` — orquestração (swarmit).
+- `RESERVED = 0x00`, `MARI_INTERNAL = 0x01` (controle/métricas do mari);
+- `SWARMIT_TESTBED = 0x10` — orquestração (swarmit);
+- `DOTBOT_APP = 0x11` — dirigir/telemetria (PyDotBot);
+- `IPV4 = 0xA0`, `IPV6 = 0xA1`, `EXPERIMENTAL = 0xFE`, `UNKNOWN = 0xFF`
+  (default quando não rotulado).
 
 Uma mesma rede carrega os dois; o adaptador filtra por `next_proto`.
 

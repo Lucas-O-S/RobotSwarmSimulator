@@ -5,7 +5,44 @@ do ecossistema [DotBots](https://github.com/DotBots) para o backend
 [TCC_Swarm_Robots](https://github.com/Lucas-O-S/TCC_Swarm_Robots) (NestJS),
 sem hardware. Arquitetura e roadmap completos em [`PLANO.md`](./PLANO.md).
 
-## Estado atual: Fase 3 — editor de cenário
+## Estado atual: Fase 4 — protocolo + codec binário
+
+`src/protocol/` implementa o encode/decode **byte a byte** do contrato de
+gateway do ecossistema DotBots — headless, sem React e sem I/O (o MQTT em si
+é a Fase 5). Cada layout foi confirmado contra as bibliotecas Python REAIS
+que o backend/cloud vai usar (versões pinadas pelo PyDotBot 0.29.1):
+
+- **`dotbot.ts`** — payloads da aplicação DotBot (`CMD_MOVE_RAW` 0x00,
+  `CMD_RGB_LED` 0x01, `ADVERTISEMENT` 0x04, `DOTBOT_ADVERTISEMENT` 0x06,
+  `CONTROL_MODE` 0x07, `LH2_WAYPOINTS` 0x08, `DOTBOT_SIMULATOR_DATA` 0xFA)
+  com `encodeDotBotPayload`/`decodeDotBotPayload`. Formato do
+  `pydotbot-utils` 0.3.0: `[1 B payload_type] + campos`. Fonte:
+  `dotbot/protocol.py` (PyDotBot) + `dotbot_utils/protocol.py`.
+- **`mari.ts`** — frame Mari **v3** (`marilib-pkg` 0.9.0): header de **21 B**
+  (`version=3:1, type:1, network_id:2, destination:8, source:8,
+  next_proto:1`) + payload. O demux de protocolo superior (`NextProto`:
+  `DOTBOT_APP=0x11`, `SWARMIT_TESTBED=0x10`) vive DENTRO do header; o byte
+  de `rssi` do v2 **não existe mais** no frame. Enums `EdgeEvent` e
+  `NextProto`, helpers de address hex⇄u64.
+- **`edge.ts`** — wire do gateway: `[1 B EdgeEvent] + evento`
+  (`encodeEdgeMessage`/`decodeEdgeMessage`), payloads de ciclo de vida
+  (`NodeInfoCloud` 16 B, `GatewayInfo` 55 B), tópicos
+  `/mari/{NETID}/to_edge|to_cloud` e **base64** puro sobre `Uint8Array`
+  (browser e node, sem `Buffer`) — o formato exato do payload MQTT.
+
+**Endianness: tudo little-endian** (`byteorder="little"` no
+`protocol.py` de ambos os pacotes Python).
+
+Os testes (`src/protocol/__tests__/`) cobrem round-trip de todos os
+payloads e **vetores golden**: bytes hex gerados executando o
+PyDotBot/marilib reais em Python e comparados 1:1 com a saída do codec TS
+(incl. int8 negativos, u64 LE, base64 do Python).
+
+```bash
+npm test   # 50 testes das Fases 1–3 + os do protocolo
+```
+
+## Fase 3 — editor de cenário
 
 A UI agora tem dois modos, alternados no topo da tela:
 
@@ -137,8 +174,8 @@ transporte/MQTT** (fases futuras). O que existe:
 - **`scenario.ts`** — `loadScenario(json)` / `serializeScenario(world)`
   seguindo o schema da seção 7 do PLANO (conversão `theta_deg` ⇄ rad).
 
-`src/net/`, `src/protocol/` e `src/link/` seguem como placeholders vazios
-(Fases 4–5).
+`src/net/` e `src/link/` seguem como placeholders vazios (Fase 5+);
+`src/protocol/` foi preenchido na Fase 4.
 
 ## Como usar (headless)
 
@@ -166,10 +203,14 @@ contra a barreira, roda 10 s simulados e imprime as poses a cada segundo.
   tamanho mínimo, contenção na arena, geração/validação de address e
   validação do arquivo carregado;
 - loop da UI (`simLoop`): acumulador de passo fixo sem drift, clamp de dt e
-  teto de ticks por frame.
+  teto de ticks por frame;
+- protocolo (Fase 4): round-trip de todos os payloads DotBot, frame Mari e
+  mensagens de edge; vetores golden gerados com o PyDotBot/marilib reais;
+  tamanhos/offsets (`DOTBOT_ADVERTISEMENT` = 34 B, header Mari = 21 B);
+  endianness (`network_id=0x1200` → `00 12`); int8 com sinal em
+  `CMD_MOVE_RAW`; base64 idêntico ao `base64.b64encode` do Python.
 
 ## Próximas fases
 
-Ver roadmap na seção 8 do [`PLANO.md`](./PLANO.md): `protocol/` + codec
-binário (4), `MqttLink` + Mosquitto (5), envelhecimento de estado (6),
-PDR/latência e swarmit (7).
+Ver roadmap na seção 8 do [`PLANO.md`](./PLANO.md): `MqttLink` + Mosquitto
+(5), envelhecimento de estado (6), PDR/latência e swarmit (7).
