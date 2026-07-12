@@ -1,0 +1,17 @@
+# Broker MQTT local (dev) — Fase 5.
+#
+#   docker compose up -d
+#
+# Portas:
+#   1883 — MQTT/TCP  (gateway headless `npm run gateway`, backend NestJS)
+#   9001 — MQTT/WebSocket (o simulador no BROWSER conecta em ws://localhost:9001)
+services:
+  mosquitto:
+    image: eclipse-mosquitto:2
+    container_name: rss-mosquitto
+    restart: unless-stopped
+    ports:
+      - '1883:1883'
+      - '9001:9001'
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro

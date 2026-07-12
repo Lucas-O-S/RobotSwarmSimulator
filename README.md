@@ -5,7 +5,97 @@ do ecossistema [DotBots](https://github.com/DotBots) para o backend
 [TCC_Swarm_Robots](https://github.com/Lucas-O-S/TCC_Swarm_Robots) (NestJS),
 sem hardware. Arquitetura e roadmap completos em [`PLANO.md`](./PLANO.md).
 
-## Estado atual: Fase 4 — protocolo + codec binário
+## Estado atual: Fase 5 (simulador) — gateway simulado na fronteira MQTT
+
+O simulador agora se comporta como **gateway + frota reais** nos tópicos
+MQTT do marilib — um backend cloud conectado ao broker não distingue de
+hardware. Lado do backend (adaptador MQTT no NestJS) é a Parte B, em outro
+repo.
+
+- **`src/link/FleetLink.ts`** — interface de transporte (espelha o
+  `dotbot/adapter.py`): `start()/stop()`, `onCommand(cb)` com comandos já
+  decodificados num tipo neutro (`move-raw`, `rgb`, `control-mode`,
+  `waypoints`) e `publishUplink(...)` com uplinks neutros (`gateway-info`,
+  `node-joined/left/keep-alive`, `node-data`+payload DotBot). Permite
+  implementação fake nos testes.
+- **`src/link/MqttLink.ts`** — implementação MQTT (lib `mqtt`, funciona em
+  node por TCP e no browser por WebSocket): assina `/mari/{NETID}/to_edge`,
+  decodifica `base64 → [EdgeEvent] + frame Mari` e entrega comandos
+  `DOTBOT_APP` via `onCommand`; publica os uplinks enquadrados em
+  `/mari/{NETID}/to_cloud`. O enquadramento é puro e exportado
+  (`encodeUplink`/`decodeDownlink`) — testável sem broker.
+- **`src/net/gateway.ts`** — `SimGateway`, o runtime que amarra
+  `World` + `FleetLink` (contrato da seção 4.4 do PLANO): ao iniciar
+  publica `GATEWAY_INFO` + um `NODE_JOINED` por robô; loop periódico com
+  `NODE_KEEP_ALIVE` por robô (~1 s, com `GATEWAY_INFO` reemitido pra
+  descoberta tardia) e `NODE_DATA`+`DOTBOT_ADVERTISEMENT` por robô a cada
+  `1/advertise_hz` (~500 ms) com a pose/estado atuais; comandos descendo
+  são roteados por `destination` (address exato ou broadcast
+  `FFFF…F`) → `applyMoveRaw`/`setWaypoints`/`setMode`/`setRgb`. O tempo
+  avança em ticks fixos de `1/tick_hz`, headless (sem rAF): `step(s)`
+  determinístico pros testes + driver `setInterval` opcional (`autoTick`).
+
+### Subir o broker (Mosquitto via docker compose)
+
+```bash
+docker compose up -d    # broker MQTT local
+```
+
+Expõe **1883** (MQTT/TCP — gateway headless e backend) e **9001**
+(MQTT/WebSocket — pro simulador rodando no browser). Config em
+[`mosquitto/mosquitto.conf`](./mosquitto/mosquitto.conf)
+(`allow_anonymous true`, só pra dev).
+
+### Rodar o gateway simulado (headless)
+
+```bash
+npm run gateway                        # scenarios/exemplo.json, mqtt://localhost:1883
+npm run gateway -- meu-cenario.json    # outro cenário
+MQTT_URL=mqtt://outro-host:1883 npm run gateway
+MQTT_PROTOCOL_VERSION=4 npm run gateway   # p/ brokers sem MQTT 5 (default 5)
+```
+
+O processo conecta no broker, loga conexão/eventos e passa a viver o ciclo
+de vida do gateway real: `NETID` sai do `network.id` do cenário (4 hex
+maiúsculos → tópicos `/mari/1200/to_edge|to_cloud` no exemplo). Pra ver o
+tráfego: `docker exec rss-mosquitto mosquitto_sub -t '/mari/#' -v`.
+
+### Conversões core → wire (decisões)
+
+- `direction` = `theta` do núcleo em graus inteiros `[0, 360)`;
+- `pos_x/pos_y/encoders` = mm arredondados (u32/i32);
+- `battery` % → mV numa rampa 3000–4200 mV (parece uma LiPo real; o
+  controller do PyDotBot divide por 1000 pra exibir volts);
+- `calibrated = 0x02` (LH2) — a posição "vem do Lighthouse" no mundo real;
+- `waypoint_x/y/idx` = alvo corrente da rota (ou 0 sem rota);
+- `asn`/`timer` do `GATEWAY_INFO` derivados do relógio simulado (slots de
+  10 ms — só precisam ser monotônicos).
+
+### O que o teste de integração cobre
+
+`src/link/__tests__/mqtt-integration.test.ts` sobe um **broker MQTT em
+processo** (`aedes`, devDependency) numa porta TCP efêmera — CI não precisa
+de docker — e conecta o `MqttLink`/`SimGateway` REAIS mais um cliente
+`mqtt` fazendo o papel do backend cloud:
+
+- o gateway publica `GATEWAY_INFO`, `NODE_JOINED` (por robô), keep-alives e
+  `NODE_DATA`+`DOTBOT_ADVERTISEMENT` em `to_cloud`, tudo **decodificável de
+  volta com o codec da Fase 4** e com pose coerente com o `World`;
+- um `CMD_MOVE_RAW` publicado em `to_edge` (enquadrado byte a byte como o
+  backend fará) move o robô alvo — e só ele — após ticks, e a telemetria
+  seguinte reflete a pose nova;
+- `LH2_WAYPOINTS` via `to_edge` põe o robô em AUTO com a rota carregada e
+  ele passa a se aproximar do 1º waypoint.
+
+Unitários novos: conversão core↔payload e roteamento por address
+(`src/net/__tests__/gateway.test.ts`), enquadramento uplink/downlink puro
+(`src/link/__tests__/mqttlink-codec.test.ts`).
+
+Obs.: o broker de teste (`aedes`) fala MQTT 3.1.1, então o `MqttLink`
+aceita `protocolVersion: 4 | 5` (default **5**, como o marilib usa contra
+o Mosquitto).
+
+## Fase 4 — protocolo + codec binário
 
 `src/protocol/` implementa o encode/decode **byte a byte** do contrato de
 gateway do ecossistema DotBots — headless, sem React e sem I/O (o MQTT em si
@@ -174,8 +264,8 @@ transporte/MQTT** (fases futuras). O que existe:
 - **`scenario.ts`** — `loadScenario(json)` / `serializeScenario(world)`
   seguindo o schema da seção 7 do PLANO (conversão `theta_deg` ⇄ rad).
 
-`src/net/` e `src/link/` seguem como placeholders vazios (Fase 5+);
-`src/protocol/` foi preenchido na Fase 4.
+`src/protocol/` foi preenchido na Fase 4; `src/link/` e `src/net/` na
+Fase 5.
 
 ## Como usar (headless)
 
@@ -212,5 +302,8 @@ contra a barreira, roda 10 s simulados e imprime as poses a cada segundo.
 
 ## Próximas fases
 
-Ver roadmap na seção 8 do [`PLANO.md`](./PLANO.md): `MqttLink` + Mosquitto
-(5), envelhecimento de estado (6), PDR/latência e swarmit (7).
+Ver roadmap na seção 8 do [`PLANO.md`](./PLANO.md): Parte B da Fase 5 é o
+**adaptador MQTT no backend NestJS** (repo TCC_Swarm_Robots) — assinar
+`/mari/{NETID}/to_cloud`, publicar em `/mari/{NETID}/to_edge` com o mesmo
+enquadramento `base64([EdgeEvent]+frame)`. Depois: envelhecimento de
+estado (6), PDR/latência e swarmit (7).
