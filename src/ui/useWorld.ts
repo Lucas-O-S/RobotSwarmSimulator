@@ -18,6 +18,16 @@ import { planTicks } from './simLoop';
 const TRAIL_MAX_POINTS = 400; // pontos por robô
 const TRAIL_MIN_DIST_MM = 8;  // só grava ponto novo se andou isso
 
+/** Fase 7 — configurações de rede vivas (view do world.sim corrente).
+ *  Valores iniciais vêm do `sim` do cenário; Reset volta pra eles. */
+export interface NetConfigValues {
+  /** Degradação ligada? (sim.net_enabled; ausente = true) */
+  enabled: boolean;
+  pdr_percent: number;    // 0..100
+  slot_latency_ms: number; // ≥ 0
+  jitter_ms: number;       // ≥ 0 (sim.jitter_ms; ausente = 0)
+}
+
 export interface UseWorldResult {
   /** O World vivo (mutável — use só pra leitura na UI). */
   world: World;
@@ -38,6 +48,12 @@ export interface UseWorldResult {
   /** Fault injection (Fase 6): derruba (false) / religa (true) um robô na
    *  rede durante a simulação. Religar não ressuscita bateria zerada. */
   setRobotOnline: (address: string, online: boolean) => void;
+  /** Fase 7 — configurações de rede (PDR/latência/jitter) do World VIVO. */
+  netConfig: NetConfigValues;
+  /** Fase 7 — ajusta as configurações de rede AO VIVO: muda world.sim, que
+   *  o SimGateway/netmodel lê por mensagem — efeito imediato em qualquer
+   *  gateway pendurado neste World. Reset volta aos valores do cenário. */
+  setNetConfig: (patch: Partial<NetConfigValues>) => void;
 }
 
 export function useWorld(scenario: Scenario): UseWorldResult {
@@ -131,6 +147,19 @@ export function useWorld(scenario: Scenario): UseWorldResult {
     setFrame((f) => f + 1);
   }, []);
 
+  const setNetConfig = useCallback((patch: Partial<NetConfigValues>) => {
+    const sim = worldRef.current!.sim;
+    if (patch.enabled !== undefined) sim.net_enabled = patch.enabled;
+    if (patch.pdr_percent !== undefined) {
+      sim.pdr_percent = Math.min(100, Math.max(0, patch.pdr_percent));
+    }
+    if (patch.slot_latency_ms !== undefined) {
+      sim.slot_latency_ms = Math.max(0, patch.slot_latency_ms);
+    }
+    if (patch.jitter_ms !== undefined) sim.jitter_ms = Math.max(0, patch.jitter_ms);
+    setFrame((f) => f + 1);
+  }, []);
+
   const world = worldRef.current;
   return {
     world,
@@ -143,5 +172,12 @@ export function useWorld(scenario: Scenario): UseWorldResult {
     reset,
     injectMoveRawTest,
     setRobotOnline,
+    netConfig: {
+      enabled: world.sim.net_enabled ?? true,
+      pdr_percent: world.sim.pdr_percent,
+      slot_latency_ms: world.sim.slot_latency_ms,
+      jitter_ms: world.sim.jitter_ms ?? 0,
+    },
+    setNetConfig,
   };
 }

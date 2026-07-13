@@ -27,13 +27,25 @@
 //     API determinística usada nos testes;
 //   - start() com autoTick (default) instala um setInterval que chama
 //     step() com o tempo real decorrido (headless, sem rAF).
+//
+// Fase 7 (Peça 1) — fidelidade de rede (PDR + latência, src/net/netmodel.ts):
+//   - TODO uplink (advertise/keep-alive/lifecycle/gateway-info) e TODO
+//     downlink (comandos do backend) atravessam um NetChannel que pode
+//     DROPAR (prob. 1 − pdr/100) ou ATRASAR (slot_latency_ms + jitter) a
+//     mensagem, em TEMPO SIMULADO (as entregas atrasadas vencem dentro do
+//     step(), nunca por wall-clock);
+//   - os parâmetros são lidos VIVOS de world.sim a cada mensagem — o menu
+//     de configurações da UI muda world.sim e o efeito é imediato;
+//   - com PDR=100 e latência 0 (default) ou net_enabled=false, o caminho é
+//     passthrough SÍNCRONO: comportamento idêntico ao das Fases 1–6.
 
 import { Robot } from '../core/Robot';
 import { World } from '../core/World';
 import { ControlModeType } from '../core/types';
 import { RAD_TO_DEG } from '../core/scenario';
 import { DotBotAdvertisementPayload, PayloadType } from '../protocol';
-import { BROADCAST_DEST, FleetCommand, FleetLink } from '../link/FleetLink';
+import { BROADCAST_DEST, FleetCommand, FleetLink, FleetUplink } from '../link/FleetLink';
+import { NetChannel, NetChannelStats, netParamsFromSim } from './netmodel';
 
 // ---------------------------------------------------------------------------
 // Conversão core → campos do DOTBOT_ADVERTISEMENT (puro, testável)
@@ -141,6 +153,9 @@ export interface SimGatewayOptions {
    *  publica N advertisements no mesmo tick. Default false (todos juntos,
    *  comportamento da Fase 5). A taxa POR ROBÔ continua advertise_hz. */
   staggerAdvertise?: boolean;
+  /** Seed do RNG do modelo de rede (Fase 7) — mesma seed + mesma sequência
+   *  de mensagens ⇒ mesmos drops/atrasos. Default fixo (determinístico). */
+  netSeed?: number;
   log?: (msg: string) => void;
 }
 
@@ -167,6 +182,12 @@ export class SimGateway {
   private lastDriverMs = 0;
   private started = false;
 
+  /** Fase 7 — canais de degradação de rede (drop/atraso por mensagem).
+   *  Uplink e downlink têm RNGs próprios (seeds derivadas) pra a fração de
+   *  drops de um sentido não depender do tráfego do outro. */
+  private readonly uplinkNet: NetChannel<FleetUplink>;
+  private readonly downlinkNet: NetChannel<FleetCommand>;
+
   constructor(opts: SimGatewayOptions) {
     this.world = opts.world;
     this.link = opts.link;
@@ -175,6 +196,22 @@ export class SimGateway {
     this.driverIntervalMs = opts.driverIntervalMs ?? 50;
     this.staggerAdvertise = opts.staggerAdvertise ?? false;
     this.log = opts.log ?? (() => {});
+    const seed = opts.netSeed ?? 0x5eed_c0de;
+    this.uplinkNet = new NetChannel<FleetUplink>(seed, (u) => this.link.publishUplink(u));
+    this.downlinkNet = new NetChannel<FleetCommand>(seed ^ 0x9e3779b9, (cmd) =>
+      this.applyDownlink(cmd),
+    );
+  }
+
+  /** Estatísticas do modelo de rede (Fase 7) — útil pra UI/depuração. */
+  get netStats(): { uplink: NetChannelStats; downlink: NetChannelStats } {
+    return { uplink: this.uplinkNet.stats, downlink: this.downlinkNet.stats };
+  }
+
+  /** Envia um uplink ATRAVÉS do modelo de rede (drop/atraso). Com os
+   *  defaults (PDR=100, latência 0) é um passthrough síncrono. */
+  private sendUplink(uplink: FleetUplink): void {
+    this.uplinkNet.send(uplink, this.world.time, netParamsFromSim(this.world.sim));
   }
 
   /** Intervalo do advertisement, em s (1/advertise_hz do cenário). */
@@ -196,7 +233,7 @@ export class SimGateway {
     for (const robot of this.world.robots) {
       this.wasOnline.set(robot.address, robot.online);
       if (!robot.online) continue;
-      this.link.publishUplink({ kind: 'node-joined', address: robot.address });
+      this.sendUplink({ kind: 'node-joined', address: robot.address });
       this.log(`[gw] ⇧ NODE_JOINED ${robot.address}`);
     }
 
@@ -238,6 +275,9 @@ export class SimGateway {
       this.world.tick();
       this.emitLifecycleTransitions();
       this.emitDue();
+      // Fase 7: vence as entregas atrasadas no TEMPO SIMULADO deste tick
+      this.uplinkNet.advanceTo(this.world.time);
+      this.downlinkNet.advanceTo(this.world.time);
     }
     return n;
   }
@@ -251,10 +291,10 @@ export class SimGateway {
       if (robot.online === was) continue;
       this.wasOnline.set(robot.address, robot.online);
       if (robot.online) {
-        this.link.publishUplink({ kind: 'node-joined', address: robot.address });
+        this.sendUplink({ kind: 'node-joined', address: robot.address });
         this.log(`[gw] ⇧ NODE_JOINED ${robot.address} (voltou à rede)`);
       } else {
-        this.link.publishUplink({ kind: 'node-left', address: robot.address });
+        this.sendUplink({ kind: 'node-left', address: robot.address });
         this.log(`[gw] ⇧ NODE_LEFT ${robot.address} (bateria zerada ou falha injetada)`);
       }
     }
@@ -270,7 +310,7 @@ export class SimGateway {
         // offline: o slot passa em silêncio, mas o relógio avança — ao
         // religar, o advertise retoma na cadência normal
         if (robot.online) {
-          this.link.publishUplink({
+          this.sendUplink({
             kind: 'node-data',
             source: robot.address,
             payload: robotToAdvertisement(robot),
@@ -283,7 +323,7 @@ export class SimGateway {
     while (t >= this.nextKeepAliveAt) {
       for (const robot of this.world.robots) {
         if (!robot.online) continue; // fora da rede não há keep-alive
-        this.link.publishUplink({ kind: 'node-keep-alive', address: robot.address });
+        this.sendUplink({ kind: 'node-keep-alive', address: robot.address });
       }
       // GATEWAY_INFO periódico junto do keep-alive: deixa um cloud que
       // conectou tarde redescobrir gateway + frota (nada é retido no MQTT).
@@ -293,7 +333,7 @@ export class SimGateway {
   }
 
   private publishGatewayInfo(): void {
-    this.link.publishUplink({
+    this.sendUplink({
       kind: 'gateway-info',
       // asn = nº do slot TSCH — sem rádio real, derivamos do relógio
       // simulado assumindo slots de 10 ms (só precisa ser monotônico).
@@ -302,7 +342,17 @@ export class SimGateway {
     });
   }
 
+  /** rx do link: o comando desce ATRAVÉS do modelo de rede (Fase 7) — pode
+   *  ser dropado ou atrasado antes de chegar em applyDownlink. Com os
+   *  defaults (PDR=100, latência 0) a aplicação é síncrona, como antes. */
   private handleCommand(cmd: FleetCommand): void {
+    this.downlinkNet.send(cmd, this.world.time, netParamsFromSim(this.world.sim));
+  }
+
+  /** Entrega efetiva do downlink no(s) robô(s) — o "rx" da seção 4.4.
+   *  Os alvos são resolvidos NO MOMENTO DA ENTREGA (um robô que caiu
+   *  enquanto o comando estava atrasado não recebe). */
+  private applyDownlink(cmd: FleetCommand): void {
     const targets = resolveTargets(this.world, cmd.destination);
     if (targets.length === 0) {
       this.log(`[gw] comando ${cmd.kind} sem alvo online pra destination ${cmd.destination}`);

@@ -53,8 +53,21 @@ export interface SimConfig {
   tick_hz: number;
   advertise_hz: number;          // usado a partir da Fase 5 (telemetria)
   battery_drain_per_min: number; // % por minuto
-  pdr_percent: number;           // reservado (fidelidade de rede)
-  slot_latency_ms: number;       // reservado (fidelidade de rede)
+  /** Fidelidade de rede (Fase 7): packet delivery ratio, 0–100%.
+   *  Cada mensagem (uplink E downlink) é descartada com prob. 1 − pdr/100.
+   *  100 = sem perda (comportamento das fases anteriores). */
+  pdr_percent: number;
+  /** Fidelidade de rede (Fase 7): atraso de entrega por mensagem, em ms
+   *  (abstração lógica da latência de slot TSCH, ~63–150 ms no Mari real).
+   *  0 = entrega imediata (comportamento das fases anteriores). */
+  slot_latency_ms: number;
+  /** OPCIONAL (Fase 7): kill-switch da degradação de rede. Ausente ou
+   *  true = pdr/latência valem; false = passthrough total (sem perda nem
+   *  atraso, ignorando pdr/latência). Retrocompatível. */
+  net_enabled?: boolean;
+  /** OPCIONAL (Fase 7): jitter uniforme em [0, jitter_ms] SOMADO ao
+   *  slot_latency_ms de cada mensagem entregue. Default 0. */
+  jitter_ms?: number;
 }
 
 /** Cor do LED (CMD_RGB_LED 0x01). */

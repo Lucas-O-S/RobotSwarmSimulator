@@ -5,7 +5,74 @@ do ecossistema [DotBots](https://github.com/DotBots) para o backend
 [TCC_Swarm_Robots](https://github.com/Lucas-O-S/TCC_Swarm_Robots) (NestJS),
 sem hardware. Arquitetura e roadmap completos em [`PLANO.md`](./PLANO.md).
 
-## Estado atual: Fase 6 — comportamento de frota + ciclo de vida
+## Estado atual: Fase 7 — fidelidade de rede (Peça 1: PDR + latência)
+
+Implementa a seção 4.6 do PLANO: **perda de pacote (PDR 0–100%)** e
+**latência de entrega** (abstração lógica da latência de slot TSCH,
+~63–150 ms no Mari real) — ligáveis/desligáveis e ajustáveis **ao vivo**,
+pra testar a robustez do backend a mensagens perdidas/atrasadas.
+**Sem rádio simulado**: modela-se só o efeito observável por mensagem.
+
+### O modelo (`src/net/netmodel.ts` — puro e determinístico)
+
+- Por mensagem, `decideFate(params, rng)` decide: **DROP** (probabilidade
+  `1 − pdr/100`) ou **DELIVER** após `slot_latency_ms` + jitter uniforme
+  opcional em `[0, jitter_ms]`. RNG **mulberry32 com seed injetável** —
+  mesma seed + mesma sequência de mensagens ⇒ mesmos drops/atrasos.
+- `NetChannel` agenda as entregas atrasadas em **tempo simulado** (nunca
+  wall-clock): `send(msg, nowS, params)` decide na hora com os params
+  vivos; `advanceTo(nowS)` entrega o que venceu, em ordem de tempo de
+  entrega (desempate FIFO). Chamado a cada tick do `step()` do gateway —
+  coerente com o loop determinístico dele.
+- Config no `sim` do cenário: `pdr_percent` e `slot_latency_ms` (existiam
+  reservados desde a Fase 1 — agora **ativos**) + os **opcionais**
+  `net_enabled` (kill-switch; ausente = true) e `jitter_ms` (default 0).
+  Cenários antigos continuam válidos.
+
+### Onde a degradação é aplicada (uplink E downlink)
+
+No `SimGateway` (`src/net/gateway.ts`), na fronteira com o `FleetLink` —
+como no rádio real, os dois sentidos perdem/atrasam:
+
+- **uplink**: todo `publishUplink` (advertise, keep-alive, NODE_JOINED/
+  LEFT, GATEWAY_INFO) atravessa um `NetChannel` antes de chegar no link;
+- **downlink**: todo comando recebido do link atravessa outro `NetChannel`
+  antes do roteamento/aplicação no robô (os alvos são resolvidos **no
+  momento da entrega** — robô que caiu durante o atraso não recebe).
+
+**Regressão garantida:** com PDR=100% e latência 0 (o default do
+`exemplo.json`) — ou com `net_enabled: false` — o caminho é **passthrough
+síncrono, sem consumir RNG**: comportamento idêntico ao das Fases 1–6
+(os 164 testes anteriores e a integração MQTT rodam intactos).
+`SimGateway` aceita `netSeed` (default fixo) e expõe `netStats`
+(sent/delivered/dropped/pending por sentido).
+
+### Menu "Configurações de rede" (modo Simular)
+
+Botão **"Configurações de rede"** na barra do modo Simular abre um painel
+(`src/ui/NetConfigPanel.tsx`) com: checkbox liga/desliga, sliders de
+**PDR (%)**, **latência (ms)** e **jitter (ms)**. As mudanças editam o
+`world.sim` **ao vivo** (via `setNetConfig` do `useWorld`) — o
+`SimGateway` lê os params por mensagem, então o efeito é imediato em
+qualquer gateway pendurado no World. Valores iniciais vêm do `sim` do
+cenário; **Reset** volta pra eles. O botão mostra um resumo quando a
+degradação está ativa; `npm run gateway` loga a config de rede do cenário.
+
+### Testes novos (Vitest, determinísticos com seed)
+
+- `src/net/__tests__/netmodel.test.ts` — RNG reprodutível; PDR=0 → tudo
+  cai / PDR=100 → nada cai; fração de drops com seed fixa dentro do
+  esperado; atraso base + faixa do jitter (63+87 → [63, 150) ms); entrega
+  só após o atraso em tempo simulado, em ordem (desempate FIFO); params
+  mudando ao vivo; kill-switch.
+- `src/net/__tests__/gateway-net.test.ts` — degradação aplicada no
+  gateway: PDR=0 silencia uplink E descarta downlink; PDR=50 com seed →
+  fração esperada e contagem reprodutível; latência segura o ciclo
+  inicial/advertise/comando até vencer no `step()`; ordem por tempo
+  simulado; **regressão** PDR=100/lat=0 ≡ `net_enabled=false` (mesma
+  sequência de uplinks, downlink síncrono, mesmas poses finais).
+
+## Fase 6 — comportamento de frota + ciclo de vida
 
 Construída em cima da Fase 5 (gateway MQTT), sem quebrar nada.
 
@@ -383,5 +450,5 @@ contra a barreira, roda 10 s simulados e imprime as poses a cada segundo.
 Ver roadmap na seção 8 do [`PLANO.md`](./PLANO.md): Parte B da Fase 5 é o
 **adaptador MQTT no backend NestJS** (repo TCC_Swarm_Robots) — assinar
 `/mari/{NETID}/to_cloud`, publicar em `/mari/{NETID}/to_edge` com o mesmo
-enquadramento `base64([EdgeEvent]+frame)`. Depois: envelhecimento de
-estado (6), PDR/latência e swarmit (7).
+enquadramento `base64([EdgeEvent]+frame)`. No simulador, falta a Peça 2 da
+Fase 7: a camada **swarmit** (state machine + OTA chunk/ack).

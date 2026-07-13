@@ -43,6 +43,18 @@ console.log(`tópicos : ${toEdgeTopic(networkId)} (⇩ comandos) | ${toCloudTopi
 console.log(
   `loop    : tick ${world.sim.tick_hz} Hz | advertise ${world.sim.advertise_hz} Hz | keep-alive 1 Hz`,
 );
+// Fase 7 — fidelidade de rede (PDR/latência) do cenário
+const netOff =
+  world.sim.net_enabled === false ||
+  (world.sim.pdr_percent >= 100 && world.sim.slot_latency_ms <= 0 && (world.sim.jitter_ms ?? 0) <= 0);
+console.log(
+  `rede    : ${
+    netOff
+      ? 'perfeita (sem perda/atraso)'
+      : `PDR ${world.sim.pdr_percent}% | latência ${world.sim.slot_latency_ms} ms` +
+        ((world.sim.jitter_ms ?? 0) > 0 ? ` + jitter ${world.sim.jitter_ms} ms` : '')
+  }`,
+);
 
 const log = (msg: string) => console.log(`${new Date().toISOString()} ${msg}`);
 const link = new MqttLink({ url, networkId, gatewayAddress, protocolVersion, log });
