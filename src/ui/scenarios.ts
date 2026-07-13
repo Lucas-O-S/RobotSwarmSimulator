@@ -4,6 +4,7 @@
 // o exemplo.json já declara o 1º robô em AUTO com a rota completa.
 
 import exemploJson from '../../scenarios/exemplo.json';
+import enxameJson from '../../scenarios/enxame.json';
 import { Scenario } from '../core/types';
 
 export interface ScenarioEntry {
@@ -13,4 +14,7 @@ export interface ScenarioEntry {
 
 export const SCENARIOS: ScenarioEntry[] = [
   { name: 'exemplo', data: exemploJson as Scenario },
+  // Fase 6 — enxame: 6 robôs (AUTO em loop, AUTO sem loop e MANUAL) + 3
+  // barreiras, pra exercitar o comportamento de frota em N robôs.
+  { name: 'enxame', data: enxameJson as Scenario },
 ];

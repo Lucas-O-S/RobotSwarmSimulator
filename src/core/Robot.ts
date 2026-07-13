@@ -40,7 +40,18 @@ export class Robot {
   readonly address: string;
   application: ApplicationType;
   mode: ControlModeType;
-  status: RobotStatus = RobotStatus.Active;
+
+  // --- Ciclo de vida / liveness (Fase 6) -----------------------------------
+  // O robô fica OFFLINE por: (a) bateria chegar a 0, ou (b) injeção de falha
+  // manual (setOnline(false)). Offline = fora da rede Mari: o SimGateway para
+  // de emitir advertise/keep-alive dele e emite NODE_LEFT uma vez; ao voltar,
+  // re-emite NODE_JOINED e retoma o loop.
+  //
+  // FRONTEIRA COM O BACKEND (seção 4.5 do PLANO): os timers de envelhecimento
+  // ACTIVE → INACTIVE (5 s sem telemetria) → LOST (60 s) vivem no
+  // controller/backend. O simulador só modela o GATILHO de rede (o robô que
+  // some/volta) — nunca esses timers.
+  private faultOffline = false;
 
   pos_x: number;
   pos_y: number;
@@ -56,6 +67,9 @@ export class Robot {
   waypoints: Vec2[] = [];
   waypoint_idx = 0;
   waypoint_threshold = 0; // mm
+  /** Rota em LOOP (Fase 6): ao alcançar o último waypoint, `waypoint_idx`
+   *  volta a 0 e a rota recomeça. false (default) = para no fim. */
+  loop = false;
 
   constructor(init: RobotInit) {
     this.address = init.address;
@@ -65,6 +79,24 @@ export class Robot {
     this.pos_y = init.y;
     this.theta = normalizeAngle(init.theta);
     this.battery = init.battery ?? 100;
+  }
+
+  /** true quando o robô está na rede: bateria > 0 E sem falha injetada. */
+  get online(): boolean {
+    return !this.faultOffline && this.battery > 0;
+  }
+
+  /** Injeção de falha (Fase 6): derruba (false) / religa (true) o robô na
+   *  rede. Religar NÃO ressuscita bateria zerada — sem energia não há rádio. */
+  setOnline(v: boolean): void {
+    this.faultOffline = !v;
+  }
+
+  /** Visão LOCAL coerente do status: Active na rede, Inactive fora dela.
+   *  O INACTIVE/LOST "de verdade" é decisão do controller/backend, pelos
+   *  timers da seção 4.5 do PLANO — este campo é só o espelho no snapshot. */
+  get status(): RobotStatus {
+    return this.online ? RobotStatus.Active : RobotStatus.Inactive;
   }
 
   /** CMD_MOVE_RAW (0x00): joystick. Entra em MANUAL; left_y/right_y viram
@@ -133,6 +165,8 @@ export class Robot {
       application: this.application,
       mode: this.mode,
       status: this.status,
+      online: this.online,
+      loop: this.loop,
       pos_x: this.pos_x,
       pos_y: this.pos_y,
       theta: this.theta,

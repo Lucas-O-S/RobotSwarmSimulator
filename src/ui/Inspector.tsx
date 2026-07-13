@@ -1,4 +1,5 @@
-// Painel lateral READ-ONLY: telemetria por robô (Fase 2).
+// Painel lateral: telemetria por robô (Fase 2) + status online/offline e
+// fault injection — derrubar/religar um robô durante a simulação (Fase 6).
 
 import type { CSSProperties } from 'react';
 import { RAD_TO_DEG } from '../core/scenario';
@@ -7,10 +8,14 @@ import { robotColor } from './MapView';
 
 export interface InspectorProps {
   robots: RobotState[];
+  /** Fault injection (Fase 6): derruba/religa o robô na rede. Se ausente,
+   *  o painel fica read-only (comportamento das fases anteriores). */
+  onSetOnline?: (address: string, online: boolean) => void;
 }
 
-function modeName(mode: ControlModeType): string {
-  return mode === ControlModeType.Auto ? 'AUTO' : 'MANUAL';
+function modeName(r: RobotState): string {
+  if (r.mode !== ControlModeType.Auto) return 'MANUAL';
+  return r.loop ? 'AUTO (loop)' : 'AUTO';
 }
 
 const cellStyle: CSSProperties = {
@@ -19,7 +24,7 @@ const cellStyle: CSSProperties = {
   whiteSpace: 'nowrap',
 };
 
-export default function Inspector({ robots }: InspectorProps) {
+export default function Inspector({ robots, onSetOnline }: InspectorProps) {
   return (
     <aside
       style={{
@@ -38,10 +43,12 @@ export default function Inspector({ robots }: InspectorProps) {
         <div
           key={r.address}
           style={{
-            border: '1px solid #e5e7eb',
+            border: `1px solid ${r.online ? '#e5e7eb' : '#d1d5db'}`,
             borderRadius: 6,
             padding: '6px 8px',
             marginBottom: 8,
+            background: r.online ? '#fff' : '#f3f4f6',
+            opacity: r.online ? 1 : 0.75,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
@@ -50,11 +57,21 @@ export default function Inspector({ robots }: InspectorProps) {
                 width: 10,
                 height: 10,
                 borderRadius: '50%',
-                background: robotColor(r, i),
+                background: r.online ? robotColor(r, i) : '#9ca3af',
                 display: 'inline-block',
               }}
             />
             <code style={{ fontSize: 12 }}>{r.address}</code>
+            <span
+              style={{
+                marginLeft: 'auto',
+                fontSize: 11,
+                fontWeight: 600,
+                color: r.online ? '#047857' : '#b91c1c',
+              }}
+            >
+              {r.online ? 'ONLINE' : 'OFFLINE'}
+            </span>
           </div>
           <table style={{ borderCollapse: 'collapse', width: '100%' }}>
             <tbody>
@@ -70,7 +87,7 @@ export default function Inspector({ robots }: InspectorProps) {
               </tr>
               <tr>
                 <td style={cellStyle}>modo</td>
-                <td style={cellStyle}>{modeName(r.mode)}</td>
+                <td style={cellStyle}>{modeName(r)}</td>
               </tr>
               <tr>
                 <td style={cellStyle}>bateria</td>
@@ -87,12 +104,41 @@ export default function Inspector({ robots }: InspectorProps) {
                 <td style={cellStyle}>
                   {r.waypoints.length > 0
                     ? `${r.waypoint_idx}/${r.waypoints.length}` +
-                      (r.waypoint_idx >= r.waypoints.length ? ' (fim)' : '')
+                      (r.loop
+                        ? ' (loop)'
+                        : r.waypoint_idx >= r.waypoints.length
+                          ? ' (fim)'
+                          : '')
                     : '—'}
                 </td>
               </tr>
             </tbody>
           </table>
+          {onSetOnline && (
+            <button
+              style={{
+                marginTop: 6,
+                padding: '3px 10px',
+                borderRadius: 6,
+                fontSize: 12,
+                cursor: 'pointer',
+                border: `1px solid ${r.online ? '#fca5a5' : '#6ee7b7'}`,
+                background: r.online ? '#fef2f2' : '#ecfdf5',
+                color: r.online ? '#b91c1c' : '#047857',
+              }}
+              disabled={!r.online && r.battery <= 0}
+              title={
+                r.online
+                  ? 'Injeta falha: o robô sai da rede (o gateway emite NODE_LEFT)'
+                  : r.battery <= 0
+                    ? 'Sem bateria — religar não ressuscita bateria zerada'
+                    : 'Religa o robô (o gateway re-emite NODE_JOINED)'
+              }
+              onClick={() => onSetOnline(r.address, !r.online)}
+            >
+              {r.online ? 'Derrubar (falha)' : 'Religar'}
+            </button>
+          )}
         </div>
       ))}
     </aside>

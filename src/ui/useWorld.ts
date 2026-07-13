@@ -35,6 +35,9 @@ export interface UseWorldResult {
   /** Injeta um CMD_MOVE_RAW de teste no 1º robô em MANUAL (só demonstração
    *  de movimento — sem UI de joystick ainda). Retorna o address ou null. */
   injectMoveRawTest: () => string | null;
+  /** Fault injection (Fase 6): derruba (false) / religa (true) um robô na
+   *  rede durante a simulação. Religar não ressuscita bateria zerada. */
+  setRobotOnline: (address: string, online: boolean) => void;
 }
 
 export function useWorld(scenario: Scenario): UseWorldResult {
@@ -123,6 +126,11 @@ export function useWorld(scenario: Scenario): UseWorldResult {
     return robot.address;
   }, []);
 
+  const setRobotOnline = useCallback((address: string, online: boolean) => {
+    worldRef.current!.getRobot(address)?.setOnline(online);
+    setFrame((f) => f + 1);
+  }, []);
+
   const world = worldRef.current;
   return {
     world,
@@ -134,5 +142,6 @@ export function useWorld(scenario: Scenario): UseWorldResult {
     pause: useCallback(() => setPlaying(false), []),
     reset,
     injectMoveRawTest,
+    setRobotOnline,
   };
 }

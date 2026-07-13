@@ -5,7 +5,85 @@ do ecossistema [DotBots](https://github.com/DotBots) para o backend
 [TCC_Swarm_Robots](https://github.com/Lucas-O-S/TCC_Swarm_Robots) (NestJS),
 sem hardware. Arquitetura e roadmap completos em [`PLANO.md`](./PLANO.md).
 
-## Estado atual: Fase 5 (simulador) — gateway simulado na fronteira MQTT
+## Estado atual: Fase 6 — comportamento de frota + ciclo de vida
+
+Construída em cima da Fase 5 (gateway MQTT), sem quebrar nada.
+
+### Ciclo de vida / liveness (o gatilho do envelhecimento no backend)
+
+Um robô fica **OFFLINE** por (a) bateria chegar a 0 (decaimento já existente)
+ou (b) **injeção de falha** manual. API do núcleo (`src/core/Robot.ts`):
+
+- `robot.online: boolean` — true quando bateria > 0 E sem falha injetada;
+- `robot.setOnline(bool)` — derruba/religa (religar **não** ressuscita
+  bateria zerada: sem energia não há rádio);
+- `robot.status` — espelho local coerente no snapshot (`Active` na rede,
+  `Inactive` fora); o snapshot também expõe `online`.
+
+No `SimGateway` (`src/net/gateway.ts`), a cada tick as transições
+online⇄offline são detectadas e:
+
+- ao cair: o gateway **para** de emitir advertise/keep-alive do robô e
+  emite **`NODE_LEFT` exatamente uma vez**;
+- ao voltar: re-emite **`NODE_JOINED`** e retoma advertise/keep-alive;
+- robô offline **não recebe downlink** (nem broadcast) — fora da rede Mari
+  não há rádio (`resolveTargets` filtra por `online`).
+
+**Fronteira com o backend (seção 4.5 do PLANO):** os timers de
+envelhecimento `ACTIVE → INACTIVE (5 s) → LOST (60 s)` vivem no
+controller/backend. O simulador só modela o **gatilho** de rede (NODE_LEFT
++ silêncio de telemetria) que dispara esses timers — eles não existem aqui.
+
+### Múltiplos robôs + cenário de enxame
+
+- Novo cenário [`scenarios/enxame.json`](./scenarios/enxame.json): **6
+  robôs** (2 AUTO em loop, 2 AUTO sem loop, 2 MANUAL) + 3 barreiras em
+  arena 4000×4000 mm. Disponível no seletor de cenários da UI e no gateway
+  headless (`npm run gateway -- scenarios/enxame.json`).
+- `SimGateway` ganhou **`staggerAdvertise`** (opcional; ligado no
+  `npm run gateway`): o robô i ganha offset de fase `i/N` do intervalo de
+  advertise, então N robôs não publicam N mensagens no mesmo tick — a taxa
+  por robô continua `advertise_hz`.
+
+### Modo AUTO — rota em LOOP
+
+- Campo **opcional** `robots[*].loop` no cenário (retrocompatível: default
+  false = para no fim, como nas fases 1–5; só é emitido no JSON salvo
+  quando true). Também editável na UI (checkbox "rota em loop" no painel
+  do robô, modo Editar).
+- Com `loop: true`, ao alcançar o último waypoint o `waypoint_idx` volta a
+  0 e a rota recomeça (cicla — visível no `DOTBOT_ADVERTISEMENT`).
+- Chegada **estável**: o controlador consome no mesmo tick os waypoints já
+  dentro do threshold (retarget imediato, sem 1 tick de deriva com o PWM
+  antigo) e, concluída a rota sem loop, zera os PWMs e a pose não muda mais
+  (sem jitter). Loop degenerado (todos os waypoints dentro do raio) para de
+  forma estável em vez de iterar infinito.
+
+### UI (mínima, funcional)
+
+- **Inspector**: cada robô mostra `ONLINE`/`OFFLINE`, modo
+  (`AUTO`/`AUTO (loop)`/`MANUAL`), bateria, `wp_idx`, e um botão
+  **"Derrubar (falha)" / "Religar"** pra injetar falha durante a simulação
+  (desabilitado quando a bateria zerou — religar não ressuscita).
+- **Mapa**: robô offline aparece **apagado/cinza** (translúcido, rótulo
+  "(off)"); rota em loop desenha o circuito fechado.
+
+### Testes novos (Vitest)
+
+- `src/core/__tests__/lifecycle.test.ts` — bateria→0 derruba, setOnline
+  alterna, religar sem bateria não ressuscita, snapshot coerente;
+- `src/core/__tests__/waypoints-loop.test.ts` — `waypoint_idx` cicla em
+  loop, para no fim sem loop, chegada sem jitter, loop degenerado estável;
+- `src/core/__tests__/scenario-loop.test.ts` — campo `loop`
+  (retrocompatibilidade + round-trip) e validação do `enxame.json` (6
+  robôs, 10 s de simulação sem sair da arena);
+- `src/net/__tests__/gateway-lifecycle.test.ts` — NODE_LEFT exatamente 1×
+  (bateria e falha), advertise pausa/retoma com NODE_JOINED re-emitido,
+  robô offline não recebe comando (nem broadcast), N=6 robôs todos
+  advertisam e roteamento por address atinge só o alvo, stagger espalha os
+  advertises mantendo a taxa.
+
+## Fase 5 (simulador) — gateway simulado na fronteira MQTT
 
 O simulador agora se comporta como **gateway + frota reais** nos tópicos
 MQTT do marilib — um backend cloud conectado ao broker não distingue de

@@ -77,6 +77,15 @@ export function loadScenario(json: Scenario | string): World {
         r.waypoint_threshold_mm ?? DEFAULT_WAYPOINT_THRESHOLD_MM;
     }
 
+    // `loop` é OPCIONAL (Fase 6) — cenários antigos não têm o campo e o
+    // default é false (para no fim da rota, o comportamento das fases 1–5).
+    if (r.loop !== undefined) {
+      if (typeof r.loop !== 'boolean') {
+        fail(`robots["${r.address}"].loop deve ser boolean`);
+      }
+      robot.loop = r.loop;
+    }
+
     world.addRobot(robot);
   }
 
@@ -118,6 +127,9 @@ export function serializeScenario(world: World): Scenario {
       if (r.waypoints.length > 0) {
         out.waypoints = r.waypoints.map((wp) => ({ x_mm: wp.x, y_mm: wp.y }));
         out.waypoint_threshold_mm = r.waypoint_threshold;
+        // `loop` só é emitido quando true (Fase 6) — cenários sem loop saem
+        // idênticos ao formato antigo (retrocompatível).
+        if (r.loop) out.loop = true;
       }
       return out;
     }),

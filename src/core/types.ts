@@ -70,6 +70,12 @@ export interface RobotState {
   application: ApplicationType;
   mode: ControlModeType;
   status: RobotStatus;
+  /** Liveness na rede (Fase 6): false = bateria zerada OU falha injetada.
+   *  É o GATILHO do envelhecimento da seção 4.5 — os timers 5 s/60 s que
+   *  levam a INACTIVE/LOST ficam no controller/backend, não aqui. */
+  online: boolean;
+  /** Rota do modo AUTO em LOOP (Fase 6): repete os waypoints ao terminar. */
+  loop: boolean;
   pos_x: number;        // mm
   pos_y: number;        // mm
   theta: number;        // rad
@@ -113,6 +119,9 @@ export interface ScenarioRobot {
   waypoints?: ScenarioWaypoint[];
   /** Raio de chegada do waypoint, em mm (OPCIONAL; default 50). */
   waypoint_threshold_mm?: number;
+  /** Rota em LOOP (OPCIONAL — Fase 6; default false = para no fim).
+   *  Cenários antigos, sem o campo, continuam válidos. */
+  loop?: boolean;
 }
 
 export interface Scenario {

@@ -10,6 +10,18 @@
 //   - rx: comandos descendo são roteados por destination (address 16 hex
 //     ou broadcast FFFF…F) e aplicados no robô certo.
 //
+// Fase 6 — ciclo de vida / liveness da frota:
+//   - robô OFFLINE (bateria 0 ou falha injetada via robot.setOnline(false))
+//     sai da rede: o gateway PARA de emitir advertise/keep-alive dele e
+//     emite NODE_LEFT exatamente uma vez; ao voltar, re-emite NODE_JOINED
+//     e retoma o loop. Robô offline também NÃO recebe downlink (nem
+//     broadcast) — fora da rede Mari não há rádio.
+//   - FRONTEIRA COM O BACKEND (seção 4.5 do PLANO): o NODE_LEFT/silêncio de
+//     telemetria daqui é só o GATILHO; os timers ACTIVE→INACTIVE(5 s)→
+//     LOST(60 s) são do controller/backend e NÃO são implementados aqui.
+//   - advertises podem ser escalonados (staggerAdvertise) pra uma frota de
+//     N robôs não publicar N mensagens no mesmo tick.
+//
 // O tempo avança em TICKS FIXOS de 1/tick_hz, desacoplado de fps/rAF:
 //   - step(realtimeSeconds) avança N ticks e emite o que venceu — é a
 //     API determinística usada nos testes;
@@ -81,11 +93,15 @@ export function robotToAdvertisement(robot: Robot): DotBotAdvertisementPayload {
 // Roteamento de comando (puro, testável)
 // ---------------------------------------------------------------------------
 
-/** Resolve os robôs-alvo de um destination (address exato ou broadcast). */
+/** Resolve os robôs-alvo de um destination (address exato ou broadcast).
+ *  Robô OFFLINE está fora da rede Mari e NÃO recebe downlink — é filtrado
+ *  inclusive do broadcast (Fase 6). */
 export function resolveTargets(world: World, destination: string): Robot[] {
-  if (destination.toUpperCase() === BROADCAST_DEST) return [...world.robots];
+  if (destination.toUpperCase() === BROADCAST_DEST) {
+    return world.robots.filter((r) => r.online);
+  }
   const robot = world.getRobot(destination.toUpperCase());
-  return robot ? [robot] : [];
+  return robot && robot.online ? [robot] : [];
 }
 
 /** Aplica um comando neutro num robô (o "rx" da seção 4.4). */
@@ -120,6 +136,11 @@ export interface SimGatewayOptions {
   autoTick?: boolean;
   /** Período do driver real-time do autoTick, ms. Default 50. */
   driverIntervalMs?: number;
+  /** Se true, escalona (stagger) o advertise dos robôs — o robô i ganha um
+   *  offset de fase de i/N do intervalo, então uma frota de N robôs não
+   *  publica N advertisements no mesmo tick. Default false (todos juntos,
+   *  comportamento da Fase 5). A taxa POR ROBÔ continua advertise_hz. */
+  staggerAdvertise?: boolean;
   log?: (msg: string) => void;
 }
 
@@ -131,10 +152,17 @@ export class SimGateway {
   private readonly keepAliveIntervalS: number;
   private readonly autoTick: boolean;
   private readonly driverIntervalMs: number;
+  private readonly staggerAdvertise: boolean;
   private readonly log: (msg: string) => void;
 
   private nextKeepAliveAt = 0;
-  private nextAdvertiseAt = 0;
+  /** Próximo advertise POR ROBÔ (address → tempo simulado, s). Permite o
+   *  stagger e mantém o relógio de cada robô mesmo enquanto ele está
+   *  offline (ao religar, o advertise retoma no slot seguinte). */
+  private nextAdvertiseAt = new Map<string, number>();
+  /** Último estado de liveness visto por robô — a detecção de transição
+   *  online⇄offline que dispara NODE_LEFT/NODE_JOINED exatamente 1×. */
+  private wasOnline = new Map<string, boolean>();
   private driver?: ReturnType<typeof setInterval>;
   private lastDriverMs = 0;
   private started = false;
@@ -145,6 +173,7 @@ export class SimGateway {
     this.keepAliveIntervalS = opts.keepAliveIntervalS ?? 1;
     this.autoTick = opts.autoTick ?? true;
     this.driverIntervalMs = opts.driverIntervalMs ?? 50;
+    this.staggerAdvertise = opts.staggerAdvertise ?? false;
     this.log = opts.log ?? (() => {});
   }
 
@@ -160,15 +189,25 @@ export class SimGateway {
     await this.link.start();
     this.started = true;
 
-    // ciclo de vida inicial (seção 4.4): gateway se descreve e "junta" a frota
+    // ciclo de vida inicial (seção 4.4): gateway se descreve e "junta" a
+    // frota — só os robôs ONLINE entram na rede (Fase 6); um robô que já
+    // parte sem bateria/derrubado nunca emite NODE_JOINED até religar.
     this.publishGatewayInfo();
     for (const robot of this.world.robots) {
+      this.wasOnline.set(robot.address, robot.online);
+      if (!robot.online) continue;
       this.link.publishUplink({ kind: 'node-joined', address: robot.address });
       this.log(`[gw] ⇧ NODE_JOINED ${robot.address}`);
     }
 
     this.nextKeepAliveAt = this.world.time + this.keepAliveIntervalS;
-    this.nextAdvertiseAt = this.world.time + this.advertiseIntervalS;
+    const interval = this.advertiseIntervalS;
+    const n = this.world.robots.length;
+    this.world.robots.forEach((robot, i) => {
+      // stagger opcional: offset de fase i/N do intervalo por robô
+      const offset = this.staggerAdvertise && n > 1 ? (interval * i) / n : 0;
+      this.nextAdvertiseAt.set(robot.address, this.world.time + interval + offset);
+    });
 
     if (this.autoTick) {
       this.lastDriverMs = Date.now();
@@ -197,25 +236,53 @@ export class SimGateway {
     const n = Math.max(0, Math.round(realtimeSeconds * this.world.sim.tick_hz));
     for (let i = 0; i < n; i++) {
       this.world.tick();
+      this.emitLifecycleTransitions();
       this.emitDue();
     }
     return n;
   }
 
+  /** Detecta transições online⇄offline (bateria zerada ou falha injetada)
+   *  e emite NODE_LEFT / NODE_JOINED exatamente 1× por transição (Fase 6).
+   *  Os timers INACTIVE/LOST decorrentes são responsabilidade do backend. */
+  private emitLifecycleTransitions(): void {
+    for (const robot of this.world.robots) {
+      const was = this.wasOnline.get(robot.address) ?? false;
+      if (robot.online === was) continue;
+      this.wasOnline.set(robot.address, robot.online);
+      if (robot.online) {
+        this.link.publishUplink({ kind: 'node-joined', address: robot.address });
+        this.log(`[gw] ⇧ NODE_JOINED ${robot.address} (voltou à rede)`);
+      } else {
+        this.link.publishUplink({ kind: 'node-left', address: robot.address });
+        this.log(`[gw] ⇧ NODE_LEFT ${robot.address} (bateria zerada ou falha injetada)`);
+      }
+    }
+  }
+
   private emitDue(): void {
     const t = this.world.time + EPS;
-    while (t >= this.nextAdvertiseAt) {
-      for (const robot of this.world.robots) {
-        this.link.publishUplink({
-          kind: 'node-data',
-          source: robot.address,
-          payload: robotToAdvertisement(robot),
-        });
+    const interval = this.advertiseIntervalS;
+    for (const robot of this.world.robots) {
+      // robô sem agenda (ex.: adicionado depois do start) entra no próximo slot
+      let next = this.nextAdvertiseAt.get(robot.address) ?? this.world.time + interval;
+      while (t >= next) {
+        // offline: o slot passa em silêncio, mas o relógio avança — ao
+        // religar, o advertise retoma na cadência normal
+        if (robot.online) {
+          this.link.publishUplink({
+            kind: 'node-data',
+            source: robot.address,
+            payload: robotToAdvertisement(robot),
+          });
+        }
+        next += interval;
       }
-      this.nextAdvertiseAt += this.advertiseIntervalS;
+      this.nextAdvertiseAt.set(robot.address, next);
     }
     while (t >= this.nextKeepAliveAt) {
       for (const robot of this.world.robots) {
+        if (!robot.online) continue; // fora da rede não há keep-alive
         this.link.publishUplink({ kind: 'node-keep-alive', address: robot.address });
       }
       // GATEWAY_INFO periódico junto do keep-alive: deixa um cloud que
@@ -238,7 +305,7 @@ export class SimGateway {
   private handleCommand(cmd: FleetCommand): void {
     const targets = resolveTargets(this.world, cmd.destination);
     if (targets.length === 0) {
-      this.log(`[gw] comando ${cmd.kind} pra destination desconhecido ${cmd.destination}`);
+      this.log(`[gw] comando ${cmd.kind} sem alvo online pra destination ${cmd.destination}`);
       return;
     }
     for (const robot of targets) {

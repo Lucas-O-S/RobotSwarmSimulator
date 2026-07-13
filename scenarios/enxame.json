@@ -1,0 +1,84 @@
+{
+  "version": 1,
+  "network": { "id": "1200", "gateway_addr": "0000000000000001" },
+  "arena": { "width_mm": 4000, "height_mm": 4000, "grid_mm": 200 },
+  "obstacles": [
+    { "id": "muro-central", "x_mm": 1800, "y_mm": 1200, "w_mm": 400, "h_mm": 1600 },
+    { "id": "caixa-ne", "x_mm": 2800, "y_mm": 3000, "w_mm": 400, "h_mm": 300 },
+    { "id": "caixa-so", "x_mm": 700, "y_mm": 2500, "w_mm": 600, "h_mm": 250 }
+  ],
+  "robots": [
+    {
+      "address": "0A11CE0000000001",
+      "application": 0,
+      "mode": 1,
+      "start": { "x_mm": 600, "y_mm": 600, "theta_deg": 0 },
+      "battery": 100,
+      "waypoints": [
+        { "x_mm": 3400, "y_mm": 600 },
+        { "x_mm": 3400, "y_mm": 3400 },
+        { "x_mm": 600, "y_mm": 3400 },
+        { "x_mm": 600, "y_mm": 600 }
+      ],
+      "waypoint_threshold_mm": 60,
+      "loop": true
+    },
+    {
+      "address": "0A11CE0000000002",
+      "application": 0,
+      "mode": 1,
+      "start": { "x_mm": 1500, "y_mm": 1000, "theta_deg": 0 },
+      "battery": 100,
+      "waypoints": [
+        { "x_mm": 2500, "y_mm": 1000 },
+        { "x_mm": 2500, "y_mm": 3000 },
+        { "x_mm": 1500, "y_mm": 3000 },
+        { "x_mm": 1500, "y_mm": 1000 }
+      ],
+      "waypoint_threshold_mm": 50,
+      "loop": true
+    },
+    {
+      "address": "0A11CE0000000003",
+      "application": 0,
+      "mode": 1,
+      "start": { "x_mm": 3600, "y_mm": 2400, "theta_deg": 270 },
+      "battery": 90,
+      "waypoints": [
+        { "x_mm": 3600, "y_mm": 1200 },
+        { "x_mm": 2800, "y_mm": 600 }
+      ],
+      "waypoint_threshold_mm": 50
+    },
+    {
+      "address": "0A11CE0000000004",
+      "application": 0,
+      "mode": 1,
+      "start": { "x_mm": 400, "y_mm": 1600, "theta_deg": 90 },
+      "battery": 80,
+      "waypoints": [{ "x_mm": 400, "y_mm": 3000 }],
+      "waypoint_threshold_mm": 50
+    },
+    {
+      "address": "0A11CE0000000005",
+      "application": 0,
+      "mode": 0,
+      "start": { "x_mm": 3000, "y_mm": 500, "theta_deg": 90 },
+      "battery": 100
+    },
+    {
+      "address": "0A11CE0000000006",
+      "application": 0,
+      "mode": 0,
+      "start": { "x_mm": 2000, "y_mm": 3600, "theta_deg": 0 },
+      "battery": 40
+    }
+  ],
+  "sim": {
+    "tick_hz": 50,
+    "advertise_hz": 2,
+    "battery_drain_per_min": 1.0,
+    "pdr_percent": 100,
+    "slot_latency_ms": 0
+  }
+}

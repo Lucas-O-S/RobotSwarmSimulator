@@ -89,7 +89,9 @@ function draw(
   }
 
   robots.forEach((r, i) => {
-    const color = robotColor(r, i);
+    // Robô OFFLINE (Fase 6) aparece "apagado": cinza e translúcido.
+    const color = r.online ? robotColor(r, i) : '#9ca3af';
+    const bodyAlpha = r.online ? 1 : 0.45;
 
     // trilha recente
     const trail = trails.get(r.address);
@@ -116,6 +118,8 @@ function draw(
       for (let k = Math.min(r.waypoint_idx, r.waypoints.length - 1); k < r.waypoints.length; k++) {
         ctx.lineTo(sx(r.waypoints[k].x), sy(r.waypoints[k].y));
       }
+      // rota em LOOP (Fase 6): fecha o circuito de volta ao waypoint 0
+      if (r.loop) ctx.lineTo(sx(r.waypoints[0].x), sy(r.waypoints[0].y));
       ctx.stroke();
       ctx.setLineDash([]);
       ctx.globalAlpha = 1;
@@ -139,6 +143,7 @@ function draw(
 
     // corpo do robô (círculo no raio real de colisão, mínimo 4 px)
     const rad = Math.max(ROBOT_RADIUS_MM * scale, 4);
+    ctx.globalAlpha = bodyAlpha;
     ctx.beginPath();
     ctx.arc(sx(r.pos_x), sy(r.pos_y), rad, 0, 2 * Math.PI);
     ctx.fillStyle = color;
@@ -156,13 +161,15 @@ function draw(
     ctx.moveTo(sx(r.pos_x), sy(r.pos_y));
     ctx.lineTo(hx, hy);
     ctx.stroke();
+    ctx.globalAlpha = 1;
 
-    // rótulo curto (4 últimos dígitos do address)
-    ctx.fillStyle = '#374151';
+    // rótulo curto (4 últimos dígitos do address; offline ganha sufixo)
+    ctx.fillStyle = r.online ? '#374151' : '#9ca3af';
     ctx.font = '11px monospace';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
-    ctx.fillText(r.address.slice(-4), sx(r.pos_x), sy(r.pos_y) + rad + 3);
+    const label = r.online ? r.address.slice(-4) : `${r.address.slice(-4)} (off)`;
+    ctx.fillText(label, sx(r.pos_x), sy(r.pos_y) + rad + 3);
   });
 }
 

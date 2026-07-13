@@ -27,6 +27,7 @@ export default function SimView({ scenario }: { scenario: Scenario }) {
     pause,
     reset,
     injectMoveRawTest,
+    setRobotOnline,
   } = useWorld(scenario);
 
   return (
@@ -62,7 +63,7 @@ export default function SimView({ scenario }: { scenario: Scenario }) {
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <MapView arena={world.arena} obstacles={world.obstacles} robots={robots} trails={trails} />
-        <Inspector robots={robots} />
+        <Inspector robots={robots} onSetOnline={setRobotOnline} />
       </div>
     </div>
   );

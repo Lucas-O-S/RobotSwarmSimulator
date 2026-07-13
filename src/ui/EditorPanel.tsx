@@ -299,6 +299,19 @@ function RobotForm({
               min={1}
             />
           </Row>
+          <Row label="rota em loop">
+            <input
+              type="checkbox"
+              checked={r.loop ?? false}
+              title="Repete a rota ao chegar no último waypoint (waypoint_idx cicla); desmarcado, o robô para no fim"
+              onChange={(e) =>
+                onChange(patchRobot(scenario, index, { loop: e.target.checked }))
+              }
+            />
+            <span style={{ fontSize: 12, color: '#6b7280' }}>
+              repetir waypoints (Fase 6)
+            </span>
+          </Row>
           {wps.length === 0 ? (
             <p style={{ fontSize: 12, color: '#6b7280', margin: '4px 0' }}>
               Sem waypoints — use a ferramenta “+ Waypoint” e clique no mapa.

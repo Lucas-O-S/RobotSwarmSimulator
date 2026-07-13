@@ -46,7 +46,9 @@ console.log(
 
 const log = (msg: string) => console.log(`${new Date().toISOString()} ${msg}`);
 const link = new MqttLink({ url, networkId, gatewayAddress, protocolVersion, log });
-const gateway = new SimGateway({ world, link, log });
+// staggerAdvertise (Fase 6): espalha os advertises da frota dentro do
+// intervalo — N robôs não publicam N mensagens no mesmo tick.
+const gateway = new SimGateway({ world, link, staggerAdvertise: true, log });
 
 await gateway.start();
 console.log('gateway rodando — Ctrl+C pra sair');
