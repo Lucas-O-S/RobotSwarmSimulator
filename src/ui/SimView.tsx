@@ -11,6 +11,8 @@ import MapView from './MapView';
 import NetConfigPanel from './NetConfigPanel';
 import SwarmitPanel from './SwarmitPanel';
 import { Scenario } from '../core/types';
+import { serializeScenario } from '../core/scenario';
+import { downloadJson } from './fileio';
 import { useWorld } from './useWorld';
 
 const btnStyle = {
@@ -70,6 +72,13 @@ export default function SimView({ scenario }: { scenario: Scenario }) {
         </button>
         <button style={btnStyle} onClick={reset}>
           Reset
+        </button>
+        <button
+          style={btnStyle}
+          onClick={() => downloadJson('cenario-estado.json', serializeScenario(world))}
+          title="Exporta o ESTADO ATUAL da simulação (poses correntes) como cenário .json"
+        >
+          Exportar estado
         </button>
         <button
           style={btnStyle}

@@ -69,7 +69,12 @@ Abre em `http://localhost:5173`. A tela tem dois modos:
 - adicione **robôs**, posicione, gire o heading e edite as propriedades
   (endereço, modo Manual/Automático, bateria e, no modo automático, a lista de
   waypoints e se a rota é em loop);
-- **salve** o cenário como um arquivo `.json` ou **carregue** um pronto.
+- **salve/replique** a configuração completa pela ferramenta **"Importar /
+  Exportar"** (no topo): baixar/carregar um arquivo `.json` ou copiar/colar o
+  JSON. Um cenário guarda **tudo** — tamanho do mapa, grid, barreiras, rede,
+  parâmetros de simulação (tick, PDR/latência) e todos os robôs (endereço,
+  modo, pose, bateria, waypoints, loop e cor do LED). No modo Simular há também
+  **"Exportar estado"**, que salva as poses correntes como um novo cenário.
 
 **Simular** — rode o cenário em tempo real:
 

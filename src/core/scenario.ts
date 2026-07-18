@@ -86,6 +86,14 @@ export function loadScenario(json: Scenario | string): World {
       robot.loop = r.loop;
     }
 
+    // `rgb` é OPCIONAL — cor do LED. Cenários antigos não têm o campo.
+    if (r.rgb !== undefined) {
+      const { r: red, g, b } = r.rgb;
+      const ok = [red, g, b].every((v) => typeof v === 'number' && v >= 0 && v <= 255);
+      if (!ok) fail(`robots["${r.address}"].rgb deve ter r/g/b em 0..255`);
+      robot.setRgb(red, g, b);
+    }
+
     world.addRobot(robot);
   }
 
@@ -130,6 +138,10 @@ export function serializeScenario(world: World): Scenario {
         // `loop` só é emitido quando true (Fase 6) — cenários sem loop saem
         // idênticos ao formato antigo (retrocompatível).
         if (r.loop) out.loop = true;
+      }
+      // `rgb` só é emitido quando o LED não está apagado (retrocompatível).
+      if (r.rgb.r !== 0 || r.rgb.g !== 0 || r.rgb.b !== 0) {
+        out.rgb = { ...r.rgb };
       }
       return out;
     }),

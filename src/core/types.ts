@@ -135,6 +135,8 @@ export interface ScenarioRobot {
   /** Rota em LOOP (OPCIONAL — Fase 6; default false = para no fim).
    *  Cenários antigos, sem o campo, continuam válidos. */
   loop?: boolean;
+  /** Cor do LED (OPCIONAL). Só é salva quando ≠ (0,0,0). Retrocompatível. */
+  rgb?: RgbColor;
 }
 
 export interface Scenario {
