@@ -56,11 +56,16 @@ console.log(
   }`,
 );
 
+// Fase 7 (Peça 2): liga o respondedor swarmit (state machine + status + acks
+// de OTA). É o "menu" do modo headless — SWARMIT=1 npm run gateway.
+const swarmitEnabled = process.env.SWARMIT === '1' || process.env.SWARMIT === 'true';
+console.log(`swarmit : ${swarmitEnabled ? 'ligado (respondedor de dispositivo)' : 'desligado'}`);
+
 const log = (msg: string) => console.log(`${new Date().toISOString()} ${msg}`);
 const link = new MqttLink({ url, networkId, gatewayAddress, protocolVersion, log });
 // staggerAdvertise (Fase 6): espalha os advertises da frota dentro do
 // intervalo — N robôs não publicam N mensagens no mesmo tick.
-const gateway = new SimGateway({ world, link, staggerAdvertise: true, log });
+const gateway = new SimGateway({ world, link, staggerAdvertise: true, swarmitEnabled, log });
 
 await gateway.start();
 console.log('gateway rodando — Ctrl+C pra sair');

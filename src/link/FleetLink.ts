@@ -11,7 +11,7 @@
 // codec da Fase 4); o gateway não vê nada disso.
 
 import { ControlModeType, Vec2 } from '../core/types';
-import { DotBotPayload } from '../protocol';
+import { DotBotPayload, SwarmitPayload } from '../protocol';
 
 /** Destination de broadcast (addressToHex(MARI_BROADCAST_ADDRESS)). */
 export const BROADCAST_DEST = 'FFFFFFFFFFFFFFFF';
@@ -55,11 +55,22 @@ export interface WaypointsCommand {
   waypoints: Vec2[];
 }
 
+/** Comando swarmit descendo (next_proto=SWARMIT_TESTBED), já decodificado.
+ *  Fase 7 (Peça 2): o backend orquestra (START, STOP, RESET, OTA, STATUS); o
+ *  gateway roteia pro respondedor do robô-alvo. `payload` é o SwarmitPayload
+ *  cru (a máquina de estados vive em src/net/swarmitDevice.ts). */
+export interface SwarmitCommand {
+  kind: 'swarmit';
+  destination: string;
+  payload: SwarmitPayload;
+}
+
 export type FleetCommand =
   | MoveRawCommand
   | RgbCommand
   | ControlModeCommand
-  | WaypointsCommand;
+  | WaypointsCommand
+  | SwarmitCommand;
 
 // ---------------------------------------------------------------------------
 // Uplinks que SOBEM (gateway → cloud), ainda em forma neutra.
@@ -90,7 +101,21 @@ export interface NodeDataUplink {
   payload: DotBotPayload;
 }
 
-export type FleetUplink = GatewayInfoUplink | NodeLifecycleUplink | NodeDataUplink;
+/** NODE_DATA (EdgeEvent 3) com payload swarmit (next_proto=SWARMIT_TESTBED).
+ *  Fase 7 (Peça 2): acks (OTA_START_ACK/OTA_CHUNK_ACK), heartbeat de status
+ *  e eventos de log que o robô devolve pro control plane. */
+export interface SwarmitDataUplink {
+  kind: 'swarmit-data';
+  /** Address do robô de origem em 16 hex maiúsculos. */
+  source: string;
+  payload: SwarmitPayload;
+}
+
+export type FleetUplink =
+  | GatewayInfoUplink
+  | NodeLifecycleUplink
+  | NodeDataUplink
+  | SwarmitDataUplink;
 
 // ---------------------------------------------------------------------------
 // A interface de transporte.

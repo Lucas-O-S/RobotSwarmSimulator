@@ -9,6 +9,7 @@ import { useState } from 'react';
 import Inspector from './Inspector';
 import MapView from './MapView';
 import NetConfigPanel from './NetConfigPanel';
+import SwarmitPanel from './SwarmitPanel';
 import { Scenario } from '../core/types';
 import { useWorld } from './useWorld';
 
@@ -35,8 +36,16 @@ export default function SimView({ scenario }: { scenario: Scenario }) {
     setRobotOnline,
     netConfig,
     setNetConfig,
+    swarmitEnabled,
+    setSwarmitEnabled,
+    swarmit,
+    swarmitStart,
+    swarmitStop,
+    swarmitReset,
+    swarmitFlash,
   } = useWorld(scenario);
   const [showNetConfig, setShowNetConfig] = useState(false);
+  const [showSwarmit, setShowSwarmit] = useState(false);
 
   const netDegraded =
     netConfig.enabled &&
@@ -83,6 +92,17 @@ export default function SimView({ scenario }: { scenario: Scenario }) {
             ` · ${netConfig.pdr_percent}% / ${netConfig.slot_latency_ms} ms` +
               (netConfig.jitter_ms > 0 ? ` +${netConfig.jitter_ms} ms` : '')}
         </button>
+        <button
+          style={{
+            ...btnStyle,
+            border: `1px solid ${showSwarmit ? '#7c3aed' : swarmitEnabled ? '#7c3aed' : '#d1d5db'}`,
+            background: showSwarmit ? '#ede9fe' : swarmitEnabled ? '#f5f3ff' : '#fff',
+          }}
+          onClick={() => setShowSwarmit((v) => !v)}
+          title="Fase 7 — camada swarmit: você faz o papel do backend (flash/start/stop/reset)"
+        >
+          Swarmit{swarmitEnabled ? ' · on' : ''}
+        </button>
         <span style={{ fontSize: 13, color: '#374151', marginLeft: 'auto' }}>
           t = {time.toFixed(1)} s · tick {world.sim.tick_hz} Hz · arena{' '}
           {world.arena.width}×{world.arena.height} mm
@@ -90,6 +110,18 @@ export default function SimView({ scenario }: { scenario: Scenario }) {
       </div>
 
       {showNetConfig && <NetConfigPanel value={netConfig} onChange={setNetConfig} />}
+
+      {showSwarmit && (
+        <SwarmitPanel
+          enabled={swarmitEnabled}
+          list={swarmit}
+          onToggle={setSwarmitEnabled}
+          onStart={swarmitStart}
+          onStop={swarmitStop}
+          onReset={(addr) => swarmitReset(addr, 0, 0)}
+          onFlash={swarmitFlash}
+        />
+      )}
 
       <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
         <MapView arena={world.arena} obstacles={world.obstacles} robots={robots} trails={trails} />

@@ -44,8 +44,15 @@ import { World } from '../core/World';
 import { ControlModeType } from '../core/types';
 import { RAD_TO_DEG } from '../core/scenario';
 import { DotBotAdvertisementPayload, PayloadType } from '../protocol';
-import { BROADCAST_DEST, FleetCommand, FleetLink, FleetUplink } from '../link/FleetLink';
+import {
+  BROADCAST_DEST,
+  FleetCommand,
+  FleetLink,
+  FleetUplink,
+  SwarmitCommand,
+} from '../link/FleetLink';
 import { NetChannel, NetChannelStats, netParamsFromSim } from './netmodel';
+import { SwarmitDevice } from './swarmitDevice';
 
 // ---------------------------------------------------------------------------
 // Conversão core → campos do DOTBOT_ADVERTISEMENT (puro, testável)
@@ -156,6 +163,12 @@ export interface SimGatewayOptions {
   /** Seed do RNG do modelo de rede (Fase 7) — mesma seed + mesma sequência
    *  de mensagens ⇒ mesmos drops/atrasos. Default fixo (determinístico). */
   netSeed?: number;
+  /** Fase 7 (Peça 2): habilita o respondedor swarmit (máquina de estados +
+   *  heartbeat SWARMIT_STATUS + acks de OTA). Default false — desligado, o
+   *  gateway se comporta exatamente como nas fases 5–6. */
+  swarmitEnabled?: boolean;
+  /** Frequência do heartbeat SWARMIT_STATUS por robô, Hz. Default 1. */
+  swarmitStatusHz?: number;
   log?: (msg: string) => void;
 }
 
@@ -182,6 +195,13 @@ export class SimGateway {
   private lastDriverMs = 0;
   private started = false;
 
+  /** Fase 7 (Peça 2) — respondedor swarmit por robô (address → device) e
+   *  agenda do heartbeat de status. Vazio/inativo quando swarmit desligado. */
+  private readonly swarmitEnabled: boolean;
+  private readonly swarmitStatusIntervalS: number;
+  private readonly swarmitDevices = new Map<string, SwarmitDevice>();
+  private nextSwarmitStatusAt = 0;
+
   /** Fase 7 — canais de degradação de rede (drop/atraso por mensagem).
    *  Uplink e downlink têm RNGs próprios (seeds derivadas) pra a fração de
    *  drops de um sentido não depender do tráfego do outro. */
@@ -195,6 +215,8 @@ export class SimGateway {
     this.autoTick = opts.autoTick ?? true;
     this.driverIntervalMs = opts.driverIntervalMs ?? 50;
     this.staggerAdvertise = opts.staggerAdvertise ?? false;
+    this.swarmitEnabled = opts.swarmitEnabled ?? false;
+    this.swarmitStatusIntervalS = 1 / (opts.swarmitStatusHz ?? 1);
     this.log = opts.log ?? (() => {});
     const seed = opts.netSeed ?? 0x5eed_c0de;
     this.uplinkNet = new NetChannel<FleetUplink>(seed, (u) => this.link.publishUplink(u));
@@ -245,6 +267,16 @@ export class SimGateway {
       const offset = this.staggerAdvertise && n > 1 ? (interval * i) / n : 0;
       this.nextAdvertiseAt.set(robot.address, this.world.time + interval + offset);
     });
+
+    // Fase 7 (Peça 2): um respondedor swarmit por robô (a orquestração é do
+    // backend; aqui só a máquina de estados + heartbeat de status).
+    if (this.swarmitEnabled) {
+      for (const robot of this.world.robots) {
+        this.swarmitDevices.set(robot.address, new SwarmitDevice(robot));
+      }
+      this.nextSwarmitStatusAt = this.world.time + this.swarmitStatusIntervalS;
+      this.log('[gw] camada swarmit LIGADA (respondedor de dispositivo)');
+    }
 
     if (this.autoTick) {
       this.lastDriverMs = Date.now();
@@ -330,6 +362,24 @@ export class SimGateway {
       this.publishGatewayInfo();
       this.nextKeepAliveAt += this.keepAliveIntervalS;
     }
+
+    // Fase 7 (Peça 2): heartbeat SWARMIT_STATUS por robô online (o backend
+    // acompanha device/status/bateria/pose por aqui). Robô offline não fala.
+    if (this.swarmitEnabled) {
+      while (t >= this.nextSwarmitStatusAt) {
+        for (const robot of this.world.robots) {
+          if (!robot.online) continue;
+          const device = this.swarmitDevices.get(robot.address);
+          if (!device) continue;
+          this.sendUplink({
+            kind: 'swarmit-data',
+            source: robot.address,
+            payload: device.heartbeat(),
+          });
+        }
+        this.nextSwarmitStatusAt += this.swarmitStatusIntervalS;
+      }
+    }
   }
 
   private publishGatewayInfo(): void {
@@ -353,6 +403,11 @@ export class SimGateway {
    *  Os alvos são resolvidos NO MOMENTO DA ENTREGA (um robô que caiu
    *  enquanto o comando estava atrasado não recebe). */
   private applyDownlink(cmd: FleetCommand): void {
+    // Fase 7 (Peça 2): comando swarmit vai pro respondedor, não pro núcleo.
+    if (cmd.kind === 'swarmit') {
+      this.applySwarmitDownlink(cmd);
+      return;
+    }
     const targets = resolveTargets(this.world, cmd.destination);
     if (targets.length === 0) {
       this.log(`[gw] comando ${cmd.kind} sem alvo online pra destination ${cmd.destination}`);
@@ -361,6 +416,28 @@ export class SimGateway {
     for (const robot of targets) {
       applyCommand(robot, cmd);
       this.log(`[gw] ⇩ ${cmd.kind} aplicado em ${robot.address}`);
+    }
+  }
+
+  /** Entrega um comando swarmit ao(s) respondedor(es) do(s) robô(s)-alvo e
+   *  faz SUBIR as respostas (OTA acks / status). A ORQUESTRAÇÃO é do backend;
+   *  aqui só a reação do dispositivo. Camada desligada ⇒ ignora. */
+  private applySwarmitDownlink(cmd: SwarmitCommand): void {
+    if (!this.swarmitEnabled) {
+      this.log('[gw] comando swarmit ignorado (camada swarmit desligada)');
+      return;
+    }
+    const targets = resolveTargets(this.world, cmd.destination);
+    if (targets.length === 0) {
+      this.log(`[gw] swarmit sem alvo online pra destination ${cmd.destination}`);
+      return;
+    }
+    for (const robot of targets) {
+      const device = this.swarmitDevices.get(robot.address);
+      if (!device) continue;
+      for (const payload of device.onCommand(cmd.payload)) {
+        this.sendUplink({ kind: 'swarmit-data', source: robot.address, payload });
+      }
     }
   }
 }

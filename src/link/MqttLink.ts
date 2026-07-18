@@ -26,6 +26,8 @@ import {
   encodeGatewayInfo,
   encodeMariFrame,
   encodeNodeInfoCloud,
+  encodeSwarmitPayload,
+  decodeSwarmitPayload,
   GATEWAY_INFO_SCHEDULE_STATS_SIZE,
   GatewayInfo,
   makeMariHeader,
@@ -92,6 +94,20 @@ export function encodeUplink(uplink: FleetUplink, opts: WireOptions): string {
       };
       return encodeEdgeMessageBase64(EdgeEvent.NODE_DATA, encodeMariFrame(frame));
     }
+    case 'swarmit-data': {
+      // Igual ao node-data, mas com next_proto=SWARMIT_TESTBED e payload
+      // swarmit (acks/status/log que o robô devolve ao control plane).
+      const frame: MariFrame = {
+        header: makeMariHeader({
+          network_id: opts.networkId,
+          destination: opts.gatewayAddress,
+          source: addressFromHex(uplink.source),
+          next_proto: NextProto.SWARMIT_TESTBED,
+        }),
+        payload: encodeSwarmitPayload(uplink.payload),
+      };
+      return encodeEdgeMessageBase64(EdgeEvent.NODE_DATA, encodeMariFrame(frame));
+    }
   }
 }
 
@@ -128,6 +144,16 @@ export function decodeDownlink(
     );
     return null;
   }
+  const destination = addressToHex(frame.header.destination);
+  // Fase 7 (Peça 2): comando swarmit desce com next_proto=SWARMIT_TESTBED.
+  if (frame.header.next_proto === NextProto.SWARMIT_TESTBED) {
+    try {
+      return { kind: 'swarmit', destination, payload: decodeSwarmitPayload(frame.payload) };
+    } catch (err) {
+      log?.(`[link] payload swarmit ilegível (${(err as Error).message})`);
+      return null;
+    }
+  }
   if (frame.header.next_proto !== NextProto.DOTBOT_APP) {
     log?.(`[link] downlink ignorado: next_proto=0x${frame.header.next_proto.toString(16)}`);
     return null;
@@ -139,7 +165,6 @@ export function decodeDownlink(
     log?.(`[link] payload DotBot ilegível (${(err as Error).message})`);
     return null;
   }
-  const destination = addressToHex(frame.header.destination);
   switch (payload.type) {
     case PayloadType.CMD_MOVE_RAW:
       return {

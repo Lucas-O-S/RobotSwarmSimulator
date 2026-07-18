@@ -1,6 +1,6 @@
 import { Robot, ROBOT_RADIUS_MM } from './Robot';
 import { applyWaypointController } from './waypoints';
-import { resolveMovement } from './physics';
+import { resolveMovement, separateRobots } from './physics';
 import {
   ArenaConfig,
   ControlModeType,
@@ -56,8 +56,9 @@ export class World {
   /** Um passo de simulação:
    *  1. controlador AUTO (quando aplicável) define os PWMs;
    *  2. cada robô integra o movimento;
-   *  3. colisão AABB bloqueia o movimento do tick;
-   *  4. bateria decai (dentro do step do robô). */
+   *  3. colisão AABB bloqueia o movimento do tick (obstáculos + bordas);
+   *  4. colisão robô × robô: separa os que se sobrepõem (não se atravessam);
+   *  5. bateria decai (dentro do step do robô). */
   tick(dt: number = this.tickDt): void {
     for (const robot of this.robots) {
       if (robot.mode === ControlModeType.Auto) {
@@ -77,6 +78,17 @@ export class World {
       robot.pos_x = resolved.x;
       robot.pos_y = resolved.y;
     }
+
+    // Colisão robô × robô: todos os robôs são corpos físicos (inclusive os
+    // offline — sem energia/rádio, mas ainda ocupam espaço no chão). Separa
+    // sobreposições respeitando arena e obstáculos.
+    const bodies = this.robots.map((r) => ({ x: r.pos_x, y: r.pos_y }));
+    separateRobots(bodies, ROBOT_RADIUS_MM, this.obstacles, this.arena);
+    this.robots.forEach((r, i) => {
+      r.pos_x = bodies[i].x;
+      r.pos_y = bodies[i].y;
+    });
+
     this.time += dt;
   }
 

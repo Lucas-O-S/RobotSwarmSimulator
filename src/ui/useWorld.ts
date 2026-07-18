@@ -14,6 +14,8 @@ import { World } from '../core/World';
 import { loadScenario } from '../core/scenario';
 import { ControlModeType, RobotState, Scenario, Vec2 } from '../core/types';
 import { planTicks } from './simLoop';
+import { SwarmitDevice } from '../net/swarmitDevice';
+import { SwarmitPayloadType, SwarmitStatusType, SWARMIT_OTA_SHA_SIZE } from '../protocol';
 
 const TRAIL_MAX_POINTS = 400; // pontos por robô
 const TRAIL_MIN_DIST_MM = 8;  // só grava ponto novo se andou isso
@@ -26,6 +28,13 @@ export interface NetConfigValues {
   pdr_percent: number;    // 0..100
   slot_latency_ms: number; // ≥ 0
   jitter_ms: number;       // ≥ 0 (sim.jitter_ms; ausente = 0)
+}
+
+/** Fase 7 (Peça 2) — visão do estado swarmit de um robô pra UI. */
+export interface SwarmitView {
+  address: string;
+  status: SwarmitStatusType;
+  flashProgress: number; // 0..1
 }
 
 export interface UseWorldResult {
@@ -54,6 +63,16 @@ export interface UseWorldResult {
    *  o SimGateway/netmodel lê por mensagem — efeito imediato em qualquer
    *  gateway pendurado neste World. Reset volta aos valores do cenário. */
   setNetConfig: (patch: Partial<NetConfigValues>) => void;
+  /** Fase 7 (Peça 2) — camada swarmit no navegador: aqui o usuário faz o
+   *  papel do backend (liga a camada e manda START/STOP/RESET/flash). */
+  swarmitEnabled: boolean;
+  setSwarmitEnabled: (on: boolean) => void;
+  /** Estado swarmit por robô (só quando a camada está ligada). */
+  swarmit: SwarmitView[];
+  swarmitStart: (address: string) => void;
+  swarmitStop: (address: string) => void;
+  swarmitReset: (address: string, x: number, y: number) => void;
+  swarmitFlash: (address: string, chunkCount?: number) => void;
 }
 
 export function useWorld(scenario: Scenario): UseWorldResult {
@@ -66,6 +85,10 @@ export function useWorld(scenario: Scenario): UseWorldResult {
   const [playing, setPlaying] = useState(true);
   // Contador só pra forçar re-render a cada frame / reset.
   const [, setFrame] = useState(0);
+
+  // Fase 7 (Peça 2) — respondedor swarmit por robô, no navegador.
+  const swarmitRef = useRef<Map<string, SwarmitDevice>>(new Map());
+  const [swarmitEnabled, setSwarmitEnabledState] = useState(false);
 
   const seedTrails = useCallback((world: World) => {
     const trails = new Map<string, Vec2[]>();
@@ -83,6 +106,7 @@ export function useWorld(scenario: Scenario): UseWorldResult {
     seedTrails(worldRef.current);
     accRef.current = 0;
     lastTsRef.current = null;
+    swarmitRef.current.clear();
   }
 
   const reset = useCallback(() => {
@@ -90,6 +114,7 @@ export function useWorld(scenario: Scenario): UseWorldResult {
     seedTrails(worldRef.current);
     accRef.current = 0;
     lastTsRef.current = null;
+    swarmitRef.current.clear();
     setFrame((f) => f + 1);
   }, [scenario, seedTrails]);
 
@@ -160,6 +185,87 @@ export function useWorld(scenario: Scenario): UseWorldResult {
     setFrame((f) => f + 1);
   }, []);
 
+  // --- Fase 7 (Peça 2): camada swarmit ------------------------------------
+  const getSwarmitDevice = useCallback(
+    (address: string): SwarmitDevice | undefined => {
+      if (!swarmitEnabled) return undefined;
+      const map = swarmitRef.current;
+      let dev = map.get(address);
+      if (!dev) {
+        const robot = worldRef.current!.getRobot(address);
+        if (!robot) return undefined;
+        dev = new SwarmitDevice(robot);
+        map.set(address, dev);
+      }
+      return dev;
+    },
+    [swarmitEnabled],
+  );
+
+  const setSwarmitEnabled = useCallback((on: boolean) => {
+    setSwarmitEnabledState(on);
+    if (!on) swarmitRef.current.clear();
+    setFrame((f) => f + 1);
+  }, []);
+
+  const swarmitStart = useCallback(
+    (address: string) => {
+      getSwarmitDevice(address)?.onCommand({ type: SwarmitPayloadType.SWARMIT_START });
+      setFrame((f) => f + 1);
+    },
+    [getSwarmitDevice],
+  );
+  const swarmitStop = useCallback(
+    (address: string) => {
+      getSwarmitDevice(address)?.onCommand({ type: SwarmitPayloadType.SWARMIT_STOP });
+      setFrame((f) => f + 1);
+    },
+    [getSwarmitDevice],
+  );
+  const swarmitReset = useCallback(
+    (address: string, x: number, y: number) => {
+      getSwarmitDevice(address)?.onCommand({
+        type: SwarmitPayloadType.SWARMIT_RESET,
+        pos_x: Math.round(x),
+        pos_y: Math.round(y),
+      });
+      setFrame((f) => f + 1);
+    },
+    [getSwarmitDevice],
+  );
+  const swarmitFlash = useCallback(
+    (address: string, chunkCount = 8) => {
+      const dev = getSwarmitDevice(address);
+      if (!dev) return;
+      dev.onCommand({
+        type: SwarmitPayloadType.SWARMIT_OTA_START,
+        fw_length: chunkCount * 128,
+        fw_chunk_count: chunkCount,
+      });
+      for (let i = 0; i < chunkCount; i++) {
+        dev.onCommand({
+          type: SwarmitPayloadType.SWARMIT_OTA_CHUNK,
+          index: i,
+          sha: new Uint8Array(SWARMIT_OTA_SHA_SIZE),
+          chunk: new Uint8Array(128),
+        });
+      }
+      setFrame((f) => f + 1);
+    },
+    [getSwarmitDevice],
+  );
+
+  const swarmit: SwarmitView[] = swarmitEnabled
+    ? worldRef.current!.robots.map((r) => {
+        const dev = getSwarmitDevice(r.address);
+        return {
+          address: r.address,
+          status: dev ? dev.status : SwarmitStatusType.Bootloader,
+          flashProgress: dev ? dev.flashProgress : 0,
+        };
+      })
+    : [];
+
   const world = worldRef.current;
   return {
     world,
@@ -179,5 +285,12 @@ export function useWorld(scenario: Scenario): UseWorldResult {
       jitter_ms: world.sim.jitter_ms ?? 0,
     },
     setNetConfig,
+    swarmitEnabled,
+    setSwarmitEnabled,
+    swarmit,
+    swarmitStart,
+    swarmitStop,
+    swarmitReset,
+    swarmitFlash,
   };
 }

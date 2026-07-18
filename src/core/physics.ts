@@ -40,3 +40,74 @@ export function resolveMovement(
   }
   return clamped;
 }
+
+// ---------------------------------------------------------------------------
+// Colisão robô × robô (Fase 8): cada robô é um círculo de mesmo raio; dois
+// robôs colidem quando a distância entre os centros é menor que 2·raio.
+// Resolvemos por SEPARAÇÃO posicional (empurra os dois pra fora, metade da
+// sobreposição pra cada um, ao longo da linha dos centros) — sem inventar
+// física de impulso/velocidade, coerente com o resto do simulador. O empurrão
+// respeita as bordas da arena e NÃO empurra ninguém pra dentro de um obstáculo.
+// ---------------------------------------------------------------------------
+
+/** Corpo circular mutável (só posição) — o World passa as poses dos robôs. */
+export interface CircleBody {
+  x: number;
+  y: number;
+}
+
+/** Move um corpo por (mx, my) se o destino ficar dentro da arena e fora dos
+ *  obstáculos; senão, não move (evita empurrar robô pra dentro de parede). */
+function tryNudge(
+  body: CircleBody,
+  mx: number,
+  my: number,
+  radius: number,
+  obstacles: Obstacle[],
+  arena: ArenaConfig,
+): void {
+  const nx = clamp(body.x + mx, radius, arena.width - radius);
+  const ny = clamp(body.y + my, radius, arena.height - radius);
+  if (collidesAny({ x: nx, y: ny }, radius, obstacles)) return;
+  body.x = nx;
+  body.y = ny;
+}
+
+/** Separa robôs que se sobrepõem, mutando as posições in place. Faz algumas
+ *  iterações pra estabilizar aglomerados (a correção de um par pode criar
+ *  sobreposição em outro). Determinístico. */
+export function separateRobots(
+  bodies: CircleBody[],
+  radius: number,
+  obstacles: Obstacle[],
+  arena: ArenaConfig,
+  iterations = 4,
+): void {
+  const minDist = radius * 2;
+  for (let it = 0; it < iterations; it++) {
+    let anyOverlap = false;
+    for (let i = 0; i < bodies.length; i++) {
+      for (let j = i + 1; j < bodies.length; j++) {
+        const a = bodies[i];
+        const b = bodies[j];
+        let dx = b.x - a.x;
+        let dy = b.y - a.y;
+        let dist = Math.hypot(dx, dy);
+        if (dist >= minDist) continue;
+        anyOverlap = true;
+        if (dist < 1e-6) {
+          // sobreposição exata: escolhe uma normal arbitrária estável
+          dx = 1;
+          dy = 0;
+          dist = 1e-6;
+        }
+        const push = (minDist - dist) / 2;
+        const nx = dx / dist;
+        const ny = dy / dist;
+        tryNudge(a, -nx * push, -ny * push, radius, obstacles, arena);
+        tryNudge(b, nx * push, ny * push, radius, obstacles, arena);
+      }
+    }
+    if (!anyOverlap) break;
+  }
+}

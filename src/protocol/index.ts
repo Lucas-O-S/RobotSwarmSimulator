@@ -5,3 +5,4 @@
 export * from './dotbot';
 export * from './mari';
 export * from './edge';
+export * from './swarmit';
