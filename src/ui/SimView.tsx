@@ -25,6 +25,13 @@ const btnStyle = {
 } as const;
 
 export default function SimView({ scenario }: { scenario: Scenario }) {
+  // Ponte com a API: quando ligada, a frota da tela vira a frota que o backend
+  // enxerga (telemetria sobe e comandos descem pelo broker MQTT). Desligada,
+  // a simulação roda 100% local, como antes.
+  const [connectOn, setConnectOn] = useState(false);
+  const [brokerUrl, setBrokerUrl] = useState('ws://localhost:9001');
+  const connectUrl = connectOn ? brokerUrl : null;
+
   const {
     world,
     robots,
@@ -45,9 +52,19 @@ export default function SimView({ scenario }: { scenario: Scenario }) {
     swarmitStop,
     swarmitReset,
     swarmitFlash,
-  } = useWorld(scenario);
+    connStatus,
+  } = useWorld(scenario, connectUrl);
   const [showNetConfig, setShowNetConfig] = useState(false);
   const [showSwarmit, setShowSwarmit] = useState(false);
+
+  const connColor =
+    connStatus === 'connected' ? '#16a34a' :
+    connStatus === 'connecting' ? '#f59e0b' :
+    connStatus === 'error' ? '#dc2626' : '#9ca3af';
+  const connLabel =
+    connStatus === 'connected' ? 'conectado' :
+    connStatus === 'connecting' ? 'conectando…' :
+    connStatus === 'error' ? 'erro (broker no ar?)' : 'offline';
 
   const netDegraded =
     netConfig.enabled &&
@@ -112,7 +129,56 @@ export default function SimView({ scenario }: { scenario: Scenario }) {
         >
           Swarmit{swarmitEnabled ? ' · on' : ''}
         </button>
-        <span style={{ fontSize: 13, color: '#374151', marginLeft: 'auto' }}>
+        <span
+          style={{
+            display: 'inline-flex',
+            alignItems: 'center',
+            gap: 6,
+            marginLeft: 'auto',
+            paddingLeft: 12,
+            borderLeft: '1px solid #e5e7eb',
+          }}
+        >
+          <button
+            style={{
+              ...btnStyle,
+              border: `1px solid ${connectOn ? '#16a34a' : '#d1d5db'}`,
+              background: connectOn ? '#dcfce7' : '#fff',
+              fontWeight: connectOn ? 600 : 400,
+            }}
+            onClick={() => setConnectOn((v) => !v)}
+            title="Liga a ponte MQTT: a frota desta tela passa a ser a que o backend (API) enxerga"
+          >
+            {connectOn ? 'Desconectar da API' : 'Conectar à API'}
+          </button>
+          <input
+            value={brokerUrl}
+            onChange={(e) => setBrokerUrl(e.target.value)}
+            disabled={connectOn}
+            title="URL do broker MQTT (WebSocket) — Mosquitto na porta 9001"
+            style={{
+              width: 170,
+              fontSize: 12,
+              padding: '4px 6px',
+              border: '1px solid #d1d5db',
+              borderRadius: 6,
+            }}
+          />
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, fontSize: 12, color: '#374151' }}>
+            <span
+              style={{
+                width: 9,
+                height: 9,
+                borderRadius: '50%',
+                background: connColor,
+                display: 'inline-block',
+              }}
+            />
+            {connLabel}
+          </span>
+        </span>
+
+        <span style={{ fontSize: 13, color: '#374151', marginLeft: 12 }}>
           t = {time.toFixed(1)} s · tick {world.sim.tick_hz} Hz · arena{' '}
           {world.arena.width}×{world.arena.height} mm
         </span>

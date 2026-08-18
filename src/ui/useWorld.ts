@@ -15,7 +15,12 @@ import { loadScenario } from '../core/scenario';
 import { ControlModeType, RobotState, Scenario, Vec2 } from '../core/types';
 import { planTicks } from './simLoop';
 import { SwarmitDevice } from '../net/swarmitDevice';
-import { SwarmitPayloadType, SwarmitStatusType, SWARMIT_OTA_SHA_SIZE } from '../protocol';
+import { SwarmitPayloadType, SwarmitStatusType, SWARMIT_OTA_SHA_SIZE, addressFromHex } from '../protocol';
+import { MqttLink } from '../link/MqttLink';
+import { SimGateway } from '../net/gateway';
+
+/** Estado da ponte MQTT com o backend (ver `connectUrl` no useWorld). */
+export type ConnStatus = 'offline' | 'connecting' | 'connected' | 'error';
 
 const TRAIL_MAX_POINTS = 400; // pontos por robô
 const TRAIL_MIN_DIST_MM = 8;  // só grava ponto novo se andou isso
@@ -73,9 +78,17 @@ export interface UseWorldResult {
   swarmitStop: (address: string) => void;
   swarmitReset: (address: string, x: number, y: number) => void;
   swarmitFlash: (address: string, chunkCount?: number) => void;
+  /** Estado da ponte MQTT com o backend (só relevante quando connectUrl != null). */
+  connStatus: ConnStatus;
 }
 
-export function useWorld(scenario: Scenario): UseWorldResult {
+/**
+ * @param connectUrl  Se não-nulo (ex.: 'ws://localhost:9001'), a simulação
+ *   passa a ser dirigida por um SimGateway ligado num MqttLink: publica
+ *   telemetria/ciclo de vida no broker e obedece comandos do backend — a MESMA
+ *   frota que a API enxerga. Nulo = roda 100% local (comportamento antigo).
+ */
+export function useWorld(scenario: Scenario, connectUrl: string | null = null): UseWorldResult {
   const worldRef = useRef<World | null>(null);
   const scenarioRef = useRef<Scenario | null>(null);
   const trailsRef = useRef<Map<string, Vec2[]>>(new Map());
@@ -85,6 +98,16 @@ export function useWorld(scenario: Scenario): UseWorldResult {
   const [playing, setPlaying] = useState(true);
   // Contador só pra forçar re-render a cada frame / reset.
   const [, setFrame] = useState(0);
+
+  // Ponte MQTT (opcional). Quando ligada, `gwRef` dirige o World via step() no
+  // mesmo loop de rAF (fonte de tempo única). `gwReadyRef` só vira true depois
+  // do gateway conectar — antes disso o loop avança local (sem publicar nada,
+  // evitando publishUplink antes do start). `resetNonce` refaz a ponte quando
+  // o reset() reconstrói o World (mesma referência de cenário).
+  const gwRef = useRef<SimGateway | null>(null);
+  const gwReadyRef = useRef(false);
+  const [connStatus, setConnStatus] = useState<ConnStatus>('offline');
+  const [resetNonce, setResetNonce] = useState(0);
 
   // Fase 7 (Peça 2) — respondedor swarmit por robô, no navegador.
   const swarmitRef = useRef<Map<string, SwarmitDevice>>(new Map());
@@ -116,6 +139,7 @@ export function useWorld(scenario: Scenario): UseWorldResult {
     lastTsRef.current = null;
     swarmitRef.current.clear();
     setFrame((f) => f + 1);
+    setResetNonce((n) => n + 1); // religa a ponte MQTT no World novo
   }, [scenario, seedTrails]);
 
   const recordTrails = useCallback((world: World) => {
@@ -146,10 +170,18 @@ export function useWorld(scenario: Scenario): UseWorldResult {
       lastTsRef.current = ts;
       if (last !== null) {
         const frameDt = (ts - last) / 1000;
-        const plan = planTicks(accRef.current, frameDt, world.tickDt);
-        accRef.current = plan.acc;
-        for (let i = 0; i < plan.ticks; i++) world.tick();
-        if (plan.ticks > 0) recordTrails(world);
+        if (gwReadyRef.current && gwRef.current) {
+          // Conectado: o SimGateway avança o World (step faz world.tick N vezes)
+          // E emite/recebe MQTT. Mesma fonte de tempo, sem duplo tick.
+          gwRef.current.step(frameDt);
+          recordTrails(world);
+        } else {
+          // Local (ou enquanto a ponte ainda conecta): avança sem publicar.
+          const plan = planTicks(accRef.current, frameDt, world.tickDt);
+          accRef.current = plan.acc;
+          for (let i = 0; i < plan.ticks; i++) world.tick();
+          if (plan.ticks > 0) recordTrails(world);
+        }
       }
       setFrame((f) => f + 1);
       raf = requestAnimationFrame(onFrame);
@@ -157,6 +189,62 @@ export function useWorld(scenario: Scenario): UseWorldResult {
     raf = requestAnimationFrame(onFrame);
     return () => cancelAnimationFrame(raf);
   }, [playing, recordTrails]);
+
+  // Ponte MQTT: cria/destrói o SimGateway + MqttLink conforme `connectUrl`.
+  // autoTick:false → o gateway NÃO tem timer próprio; quem chama step() é o
+  // loop de animação acima (fonte de tempo única). networkId/gateway vêm do
+  // próprio cenário (world.network), igual ao gateway-run.ts headless.
+  useEffect(() => {
+    if (!connectUrl) {
+      setConnStatus('offline');
+      return;
+    }
+    const world = worldRef.current!;
+    let cancelled = false;
+    let gw: SimGateway | null = null;
+    try {
+      const networkId = parseInt(world.network.id, 16);
+      const gatewayAddress = addressFromHex(world.network.gateway_addr);
+      const link = new MqttLink({
+        url: connectUrl,
+        networkId,
+        gatewayAddress,
+        protocolVersion: 5,
+        log: (m) => console.log(m),
+      });
+      gw = new SimGateway({
+        world,
+        link,
+        autoTick: false, // o rAF chama step() — não deixamos o gateway ter timer próprio
+        staggerAdvertise: true,
+        log: (m) => console.log(m),
+      });
+      setConnStatus('connecting');
+      gw.start()
+        .then(() => {
+          if (cancelled) {
+            void gw?.stop().catch(() => {});
+            return;
+          }
+          gwRef.current = gw;
+          gwReadyRef.current = true;
+          setConnStatus('connected');
+        })
+        .catch((e) => {
+          console.error('[ponte] falha ao conectar no broker:', e);
+          setConnStatus('error');
+        });
+    } catch (e) {
+      console.error('[ponte] erro ao montar a ponte MQTT:', e);
+      setConnStatus('error');
+    }
+    return () => {
+      cancelled = true;
+      gwReadyRef.current = false;
+      gwRef.current = null;
+      void gw?.stop().catch(() => {});
+    };
+  }, [connectUrl, scenario, resetNonce]);
 
   const injectMoveRawTest = useCallback((): string | null => {
     const world = worldRef.current!;
@@ -292,5 +380,6 @@ export function useWorld(scenario: Scenario): UseWorldResult {
     swarmitStop,
     swarmitReset,
     swarmitFlash,
+    connStatus,
   };
 }

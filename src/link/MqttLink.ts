@@ -12,7 +12,15 @@
 // O enquadramento uplink e a decodificação downlink são FUNÇÕES PURAS
 // exportadas (encodeUplink / decodeDownlink) — testáveis sem broker.
 
-import { connect, MqttClient } from 'mqtt';
+import * as mqttNs from 'mqtt';
+import type { MqttClient } from 'mqtt';
+
+// mqtt v5 tem builds diferentes por ambiente: o build Node (usado pelo tsx no
+// gateway-run) expõe `connect` como named export; já o bundle ESM que o Vite
+// usa no browser (dist/mqtt.esm.js) expõe SÓ `export default`. Pegar das duas
+// formas faz este arquivo funcionar igual em node e no navegador (a UI).
+const connect: typeof import('mqtt').connect =
+  (mqttNs as any).connect ?? (mqttNs as any).default?.connect ?? (mqttNs as any).default;
 
 import {
   addressFromHex,
