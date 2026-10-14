@@ -28,7 +28,7 @@
   ],
   "sim": {
     "tick_hz": 50,
-    "advertise_hz": 2,
+    "advertise_hz": 10,
     "battery_drain_per_min": 1.0,
     "pdr_percent": 100,
     "slot_latency_ms": 0

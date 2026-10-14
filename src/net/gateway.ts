@@ -6,7 +6,7 @@
 //     (pra backend que conecta tarde redescobrir a frota — nota da
 //     seção 4.1: NODE_JOINED não é retido no MQTT) e
 //     NODE_DATA+DOTBOT_ADVERTISEMENT por robô a cada 1/advertise_hz
-//     (~500 ms com o advertise_hz=2 do cenário);
+//     (~100 ms com o advertise_hz=10 do cenário);
 //   - rx: comandos descendo são roteados por destination (address 16 hex
 //     ou broadcast FFFF…F) e aplicados no robô certo.
 //
